@@ -90,6 +90,26 @@ class CapCutGui:
             background=PANEL_2,
             padding=(12, 6),
         )
+        self.style.configure(
+            "Ghost.TButton",
+            font=("Segoe UI", 9),
+            foreground=SUBTEXT,
+            background=PANEL_2,
+            padding=(10, 4),
+        )
+        self.style.map(
+            "Ghost.TButton",
+            foreground=[("active", TEXT), ("disabled", "#64748b")],
+            background=[("active", "#24314f"), ("disabled", PANEL_2)],
+        )
+        self.style.configure(
+            "Search.TEntry",
+            fieldbackground="#0f172a",
+            foreground=TEXT,
+            insertcolor=TEXT,
+            borderwidth=1,
+            padding=6,
+        )
         self.style.map(
             "Secondary.TButton",
             background=[("active", "#1f2a44"), ("disabled", "#1f2a44")],
@@ -126,13 +146,19 @@ class CapCutGui:
         self.backup_var = tk.BooleanVar(value=True)
         self.status_var = tk.StringVar(value="Ready · Refresh projects, select from grid, then Sync")
 
-        self.project_items: list[tuple[str, tk.BooleanVar]] = []
+        self.project_items: list[tuple[str, str, tk.BooleanVar, ttk.Checkbutton]] = []
+        self.project_search_var = tk.StringVar()
+        self.project_stats_var = tk.StringVar(value="0 selected")
+
         self.projects_canvas: tk.Canvas | None = None
         self.projects_container: ttk.Frame | None = None
         self.projects_canvas_window: int | None = None
         self.projects_scroll: ttk.Scrollbar | None = None
         self.refresh_button: ttk.Button | None = None
+        self.inspect_button: ttk.Button | None = None
         self.sync_button: ttk.Button | None = None
+        self.select_all_button: ttk.Button | None = None
+        self.clear_all_button: ttk.Button | None = None
         self.progress_bar: ttk.Progressbar | None = None
         self.status_badge: ttk.Label | None = None
         self.status_label: ttk.Label | None = None
@@ -160,14 +186,14 @@ class CapCutGui:
         )
         ttk.Label(
             header,
-            text="Refresh projects → select → Sync",
+            text="Refresh → filter/select projects → Inspect/Sync",
             style="Subtle.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(4, 0))
 
         left_panel = ttk.Frame(main_frame, style="Panel.TFrame")
         left_panel.grid(row=1, column=0, sticky=NSEW, padx=(0, 14))
         left_panel.columnconfigure(0, weight=1)
-        left_panel.rowconfigure(2, weight=1)
+        left_panel.rowconfigure(1, weight=1)
 
         action_card = ttk.Labelframe(
             left_panel,
@@ -176,40 +202,49 @@ class CapCutGui:
             style="ProjectCard.TLabelframe",
         )
         action_card.grid(row=0, column=0, sticky=EW)
-        action_card.columnconfigure(1, weight=1)
+        action_card.columnconfigure(2, weight=1)
 
         ttk.Label(action_card, text="Quick flow", style="SectionTitle.TLabel").grid(
             row=0, column=0, sticky="w", pady=(0, 8)
         )
         ttk.Label(
             action_card,
-            text="Use detected CapCut projects below. Minimal inputs only.",
+            text="Run a safe Inspect first, then Sync once output looks good.",
             style="Subtle.TLabel",
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 12))
 
         self.refresh_button = ttk.Button(
             action_card,
-            text="Refresh Projects",
+            text="Refresh",
             command=self.refresh_projects,
-            width=18,
+            width=12,
             style="Secondary.TButton",
         )
         self.refresh_button.grid(row=2, column=0, sticky="w")
 
+        self.inspect_button = ttk.Button(
+            action_card,
+            text="Inspect",
+            command=self._on_inspect_audio,
+            width=12,
+            style="Secondary.TButton",
+        )
+        self.inspect_button.grid(row=2, column=1, sticky="w", padx=(8, 0))
+
         self.sync_button = ttk.Button(
             action_card,
-            text="Sync Selected",
+            text="Sync",
             command=self._on_sync_audio,
-            width=18,
+            width=12,
             style="Accent.TButton",
         )
-        self.sync_button.grid(row=2, column=1, sticky="w", padx=(8, 0))
+        self.sync_button.grid(row=2, column=2, sticky="w", padx=(8, 0))
 
         ttk.Label(
             action_card,
             text=f"CapCut root: {DEFAULT_CAPCUT_PROJECT_ROOT}",
             style="Subtle.TLabel",
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         projects_card = ttk.Labelframe(
             left_panel,
@@ -219,16 +254,42 @@ class CapCutGui:
         )
         projects_card.grid(row=1, column=0, sticky=NSEW, pady=(14, 0))
         projects_card.columnconfigure(0, weight=1)
-        projects_card.rowconfigure(1, weight=1)
+        projects_card.rowconfigure(2, weight=1)
+
+        toolbar = ttk.Frame(projects_card, style="Panel.TFrame")
+        toolbar.grid(row=0, column=0, sticky=EW, pady=(0, 8))
+        toolbar.columnconfigure(1, weight=1)
+
+        ttk.Label(toolbar, text="Find:", style="Subtle.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        search_entry = ttk.Entry(toolbar, textvariable=self.project_search_var, style="Search.TEntry")
+        search_entry.grid(row=0, column=1, sticky=EW)
+
+        self.select_all_button = ttk.Button(
+            toolbar,
+            text="All",
+            command=self._select_all_projects,
+            style="Ghost.TButton",
+            width=6,
+        )
+        self.select_all_button.grid(row=0, column=2, sticky="e", padx=(8, 4))
+
+        self.clear_all_button = ttk.Button(
+            toolbar,
+            text="Clear",
+            command=self._clear_all_projects,
+            style="Ghost.TButton",
+            width=6,
+        )
+        self.clear_all_button.grid(row=0, column=3, sticky="e")
 
         ttk.Label(
             projects_card,
-            text="Select one or more projects to sync.",
+            textvariable=self.project_stats_var,
             style="Subtle.TLabel",
-        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+        ).grid(row=1, column=0, sticky="w", pady=(0, 8))
 
         list_host = ttk.Frame(projects_card, style="Panel.TFrame")
-        list_host.grid(row=1, column=0, sticky=NSEW)
+        list_host.grid(row=2, column=0, sticky=NSEW)
         list_host.columnconfigure(0, weight=1)
         list_host.rowconfigure(0, weight=1)
 
@@ -267,7 +328,7 @@ class CapCutGui:
 
         ttk.Label(
             log_card,
-            text="Live sync output + errors.",
+            text="Live inspect/sync output + errors.",
             style="Subtle.TLabel",
         ).grid(row=0, column=0, sticky="w", pady=(0, 8))
 
@@ -310,6 +371,7 @@ class CapCutGui:
             self.projects_canvas.bind_all("<MouseWheel>", self._on_projects_mousewheel)
         if self.projects_container is not None:
             self.projects_container.bind("<Configure>", self._on_projects_container_configure)
+        self.project_search_var.trace_add("write", self._on_search_change)
 
     def _on_projects_canvas_configure(self, event) -> None:
         if self.projects_canvas is None or self.projects_canvas_window is None:
@@ -329,13 +391,52 @@ class CapCutGui:
         return "break"
 
     def _select_all_projects(self, _event=None):
-        for _, var in self.project_items:
+        for _, _, var, _ in self.project_items:
             var.set(True)
+        self._update_project_stats()
         return "break"
+
+    def _clear_all_projects(self, _event=None):
+        for _, _, var, _ in self.project_items:
+            var.set(False)
+        self._update_project_stats()
+        return "break"
+
+    def _on_search_change(self, *_args) -> None:
+        self._apply_project_filter()
+
+    def _toggle_project(self) -> None:
+        self._update_project_stats()
+
+    def _apply_project_filter(self) -> None:
+        if self.projects_container is None:
+            return
+
+        keyword = self.project_search_var.get().strip().lower()
+        visible_row = 0
+        visible_count = 0
+
+        for _, name, _, widget in self.project_items:
+            show = keyword in name.lower() if keyword else True
+            if show:
+                widget.grid(row=visible_row, column=0, sticky=EW, pady=(0, 2))
+                visible_row += 1
+                visible_count += 1
+            else:
+                widget.grid_remove()
+
+        self._update_project_stats(visible_count=visible_count)
+        self._on_projects_container_configure()
+
+    def _update_project_stats(self, visible_count: int | None = None) -> None:
+        total = len(self.project_items)
+        selected = sum(1 for _, _, var, _ in self.project_items if var.get())
+        visible = visible_count if visible_count is not None else sum(1 for _, _, _, widget in self.project_items if widget.winfo_manager())
+        self.project_stats_var.set(f"Selected {selected}/{total} · Visible {visible}")
 
     def _collect_selected_projects(self) -> list[str]:
         out: list[str] = []
-        for path, var in self.project_items:
+        for path, _, var, _ in self.project_items:
             if var.get():
                 out.append(path)
         return sorted(out)
@@ -387,6 +488,10 @@ class CapCutGui:
 
         return resolved_images, resolved_voices
 
+    def _on_inspect_audio(self) -> None:
+        self.mode_var.set("inspect")
+        self._start_run()
+
     def _on_sync_audio(self) -> None:
         self.mode_var.set("sync")
         self._start_run()
@@ -416,7 +521,8 @@ class CapCutGui:
         self._append_log(
             f"mode={mode} projects={len(selected_projects)} images={images or '[auto]'} voices={voices or '[auto]'} backup={self.backup_var.get()}\n"
         )
-        self._set_status(f"Running {mode} for {len(selected_projects)} selected project(s)...", "info")
+        mode_label = "Inspect" if mode == "inspect" else "Sync"
+        self._set_status(f"Running {mode_label} for {len(selected_projects)} selected project(s)...", "info")
         self._set_running_state(True)
 
         if getattr(sys, "frozen", False) or len(selected_projects) > 1:
@@ -454,6 +560,7 @@ class CapCutGui:
         self.project_items = []
 
         if not DEFAULT_CAPCUT_PROJECT_ROOT.exists():
+            self.project_stats_var.set("Selected 0/0 · Visible 0")
             self._append_log(
                 f'Default CapCut root "{DEFAULT_CAPCUT_PROJECT_ROOT}" not found. Refresh once Windows volume is available.\n'
             )
@@ -486,22 +593,25 @@ class CapCutGui:
             self._append_log(f"Skipped {skipped} non-project folders from list.\n")
 
         if not filtered:
+            self.project_stats_var.set("Selected 0/0 · Visible 0")
             self._append_log(f"No CapCut projects found inside {DEFAULT_CAPCUT_PROJECT_ROOT}.\n")
             self._set_status("No projects found", "warning")
             return
 
         for entry in filtered:
-            self.project_items.append((str(entry), tk.BooleanVar(value=True)))
+            project_var = tk.BooleanVar(value=True)
             label = ttk.Checkbutton(
                 self.projects_container,
                 text=entry.name,
-                variable=self.project_items[-1][1],
+                variable=project_var,
                 style="Project.TCheckbutton",
                 onvalue=True,
                 offvalue=False,
+                command=self._toggle_project,
             )
-            label.grid(row=len(self.project_items) - 1, column=0, sticky=EW, pady=(0, 2))
+            self.project_items.append((str(entry), entry.name, project_var, label))
 
+        self._apply_project_filter()
         self._set_status(f"Project list refreshed · {len(filtered)} project(s) ready", "info")
 
     def _execute_embedded_batch(
@@ -603,10 +713,17 @@ class CapCutGui:
             else:
                 self.progress_bar.stop()
 
+        new_state = "disabled" if running else "normal"
         if self.sync_button is not None:
-            self.sync_button.configure(state="disabled" if running else "normal")
+            self.sync_button.configure(state=new_state)
+        if self.inspect_button is not None:
+            self.inspect_button.configure(state=new_state)
         if self.refresh_button is not None:
-            self.refresh_button.configure(state="disabled" if running else "normal")
+            self.refresh_button.configure(state=new_state)
+        if self.select_all_button is not None:
+            self.select_all_button.configure(state=new_state)
+        if self.clear_all_button is not None:
+            self.clear_all_button.configure(state=new_state)
 
     def _set_status(self, message: str, status_type: str = "info") -> None:
         self.status_var.set(message)
