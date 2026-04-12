@@ -1,0 +1,28 @@
+{
+  "tracks": [
+    {
+      "type": "video",
+      "segments": [
+        {
+          "id": "video-template-seg-1",
+          "target_timerange": {"start": 0, "duration": 1000000},
+          "source_timerange": {"start": 0, "duration": 1000000}
+        }
+      ]
+    },
+    {
+      "type": "audio",
+      "segments": [
+        {
+          "id": "audio-template-seg-1",
+          "target_timerange": {"start": 0, "duration": 1000000},
+          "source_timerange": {"start": 0, "duration": 1000000}
+        }
+      ]
+    }
+  ],
+  "duration": 1000000,
+  "tm_duration": 1000000,
+  "max_duration": 1000000,
+  "draft_duration": 1000000
+}

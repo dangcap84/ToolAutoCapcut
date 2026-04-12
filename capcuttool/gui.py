@@ -33,6 +33,9 @@ STATUS_COLORS = {
 TEMPLATE_CACHE_DIR = BASE_DIR / "_template_cache"
 TEMPLATE_CACHE_PROJECT_DIR = TEMPLATE_CACHE_DIR / "project_template"
 TEMPLATE_CACHE_META = TEMPLATE_CACHE_DIR / "template_meta.json"
+TEMPLATE_SOURCE_DIR = BASE_DIR / "_template_source"
+TEMPLATE_SOURCE_PROJECT_DIR = TEMPLATE_SOURCE_DIR / "project_template"
+TEMPLATE_SOURCE_META = TEMPLATE_SOURCE_DIR / "template_meta.json"
 
 # UI palette inspired by tool33ai
 ACCENT = "#7c3aed"
@@ -47,7 +50,7 @@ SUBTEXT = "#94a3b8"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v2.2 (build v18)")
+        self.root.title("CapCut Sync v2.3 (build v19)")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -445,16 +448,27 @@ class CapCutGui:
                 shutil.copy2(item, dst_dir / item.name)
 
     def _refresh_template_info_label(self) -> None:
+        if TEMPLATE_SOURCE_META.exists():
+            try:
+                meta = json.loads(TEMPLATE_SOURCE_META.read_text(encoding="utf-8"))
+                source = meta.get("source", "?")
+                saved_at = meta.get("saved_at", "?")
+                self.template_info_var.set(f"Template nội bộ: nguồn '{source}' · cập nhật {saved_at}")
+                return
+            except Exception:
+                pass
+
         if TEMPLATE_CACHE_META.exists():
             try:
                 meta = json.loads(TEMPLATE_CACHE_META.read_text(encoding="utf-8"))
                 source = meta.get("source", "?")
                 saved_at = meta.get("saved_at", "?")
-                self.template_info_var.set(f"Template cache: đã lưu từ '{source}' lúc {saved_at}")
+                self.template_info_var.set(f"Template cache tạm: từ '{source}' · {saved_at}")
                 return
             except Exception:
                 pass
-        self.template_info_var.set("Template cache: chưa lưu")
+
+        self.template_info_var.set("Template: chưa có dữ liệu")
 
     def _save_template_cache(self, source_project: Path) -> None:
         TEMPLATE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -480,11 +494,35 @@ class CapCutGui:
         if fallback.exists() and fallback.is_dir():
             return fallback
 
+        if DEFAULT_CAPCUT_PROJECT_ROOT.exists() and DEFAULT_CAPCUT_PROJECT_ROOT.is_dir():
+            for entry in sorted(DEFAULT_CAPCUT_PROJECT_ROOT.iterdir(), key=lambda p: p.name.lower()):
+                if not entry.is_dir():
+                    continue
+                name_lower = entry.name.lower()
+                if "cloud" in name_lower or "recycle" in name_lower:
+                    continue
+                if name_lower in {
+                    "$recycle.bin",
+                    ".recycle_bin",
+                    "recycle bin",
+                    "recycle",
+                    "recycle.bin",
+                    "system volume information",
+                    "projects",
+                    "project",
+                }:
+                    continue
+                if (entry / "draft_content.json").exists():
+                    return entry
+
         raise ValueError(
-            "Không có template khả dụng. Hãy tick 1 project bất kỳ trong danh sách."
+            "Không có project nào để học template. Chỉ cần mở CapCut có 1 project bất kỳ rồi chạy lại."
         )
 
     def _resolve_template_project(self) -> Path:
+        if TEMPLATE_SOURCE_PROJECT_DIR.exists() and TEMPLATE_SOURCE_PROJECT_DIR.is_dir():
+            return TEMPLATE_SOURCE_PROJECT_DIR
+
         if TEMPLATE_CACHE_PROJECT_DIR.exists() and TEMPLATE_CACHE_PROJECT_DIR.is_dir():
             return TEMPLATE_CACHE_PROJECT_DIR
 
@@ -534,6 +572,31 @@ class CapCutGui:
         except Exception as exc:
             messagebox.showerror("Thiếu template", str(exc))
             return
+
+        if (
+            template_project == TEMPLATE_CACHE_PROJECT_DIR
+            and not TEMPLATE_SOURCE_PROJECT_DIR.exists()
+        ):
+            try:
+                TEMPLATE_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
+                if TEMPLATE_SOURCE_PROJECT_DIR.exists():
+                    shutil.rmtree(TEMPLATE_SOURCE_PROJECT_DIR)
+                shutil.copytree(TEMPLATE_CACHE_PROJECT_DIR, TEMPLATE_SOURCE_PROJECT_DIR)
+                if TEMPLATE_CACHE_META.exists():
+                    cache_meta = json.loads(TEMPLATE_CACHE_META.read_text(encoding="utf-8"))
+                else:
+                    cache_meta = {
+                        "source": "auto",
+                        "source_path": str(TEMPLATE_CACHE_PROJECT_DIR),
+                        "saved_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    }
+                TEMPLATE_SOURCE_META.write_text(
+                    json.dumps(cache_meta, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                self._refresh_template_info_label()
+                self._append_log("[TEMPLATE] Đã lưu template nội bộ vào source code.\n")
+            except Exception as exc:
+                messagebox.showwarning("Lưu template nội bộ lỗi", str(exc))
 
         self.current_action = "batch_create"
         self._append_log("\n--- Tạo batch project ---\n")
