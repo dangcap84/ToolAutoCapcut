@@ -10,6 +10,7 @@ class SyncStats:
     video_segments_updated: int
     audio_segments_updated: int
     total_duration_us: int
+    source_scenes: int
 
 
 def sec_to_us(sec: float) -> int:
@@ -50,6 +51,23 @@ def _select_track_with_segments(tracks: List[Dict[str, Any]], wanted: str, min_c
     return candidates[0][1]
 
 
+def _select_track_with_most_segments(tracks: List[Dict[str, Any]], wanted: str) -> Dict[str, Any] | None:
+    candidates: List[Tuple[int, Dict[str, Any]]] = []
+    for tr in tracks:
+        t = _track_type(tr)
+        if wanted == "video" and t in {"audio", "effect", "text", "sticker"}:
+            continue
+        if wanted == "audio" and t != "audio":
+            continue
+        c = len(_segments_of(tr))
+        if c > 0:
+            candidates.append((c, tr))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
+
+
 def _update_track_segments(track: Dict[str, Any], durations_us: List[int]) -> int:
     segs = _sort_by_target_start(_segments_of(track))
     count = min(len(segs), len(durations_us))
@@ -80,18 +98,31 @@ def sync_draft(draft: Dict[str, Any], durations_us: List[int]) -> SyncStats:
     if not isinstance(tracks, list):
         raise ValueError("draft_content.json missing 'tracks' list")
 
-    scene_count = len(durations_us)
-    total = sum(durations_us)
+    source_scene_count = len(durations_us)
 
-    video_track = _select_track_with_segments(tracks, "video", scene_count)
+    video_track = _select_track_with_segments(tracks, "video", source_scene_count)
     if video_track is None:
-        raise ValueError("Cannot find suitable video track with enough segments")
-    v_updated = _update_track_segments(video_track, durations_us)
+        video_track = _select_track_with_most_segments(tracks, "video")
+    if video_track is None:
+        raise ValueError("Cannot find any usable video track")
+
+    video_seg_count = len(_segments_of(video_track))
+    if video_seg_count <= 0:
+        raise ValueError("Chosen video track has no segments")
+
+    effective_durations = durations_us[:video_seg_count]
+    scene_count = len(effective_durations)
+    total = sum(effective_durations)
+
+    v_updated = _update_track_segments(video_track, effective_durations)
 
     audio_track = _select_track_with_segments(tracks, "audio", scene_count)
+    if audio_track is None:
+        audio_track = _select_track_with_most_segments(tracks, "audio")
+
     a_updated = 0
     if audio_track is not None:
-        a_updated = _update_track_segments(audio_track, durations_us)
+        a_updated = _update_track_segments(audio_track, effective_durations)
 
     _update_project_duration_fields(draft, total)
 
@@ -100,6 +131,7 @@ def sync_draft(draft: Dict[str, Any], durations_us: List[int]) -> SyncStats:
         video_segments_updated=v_updated,
         audio_segments_updated=a_updated,
         total_duration_us=total,
+        source_scenes=source_scene_count,
     )
 
 

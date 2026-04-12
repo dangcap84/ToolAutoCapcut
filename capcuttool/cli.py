@@ -109,6 +109,9 @@ def run_sync(project: Path, images: Path | None = None, voices: Path | None = No
 
     print("sync_done=true")
     print(f"scenes={stats_main.scenes}")
+    print(f"source_scenes={stats_main.source_scenes}")
+    if stats_main.source_scenes != stats_main.scenes:
+        print(f"scene_truncated=true (from {stats_main.source_scenes} to {stats_main.scenes})")
     print(f"video_segments_updated={stats_main.video_segments_updated}")
     print(f"audio_segments_updated={stats_main.audio_segments_updated}")
     print(f"total_duration_us={stats_main.total_duration_us}")
