@@ -14,12 +14,12 @@ call .venv\Scripts\activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 
-pyinstaller --noconfirm --clean --onefile --windowed --name capcut_gui_v10 gui.py
+pyinstaller --noconfirm --clean --onefile --windowed --name capcut_gui_v11 gui.py
 
-if not exist C:\Users\Admin\capcut_adapter_test mkdir C:\Users\Admin\capcut_adapter_test
-copy /Y "%cd%\dist\capcut_gui_v10.exe" "C:\Users\Admin\capcut_adapter_test\capcut_gui_v10.exe" >nul
+if not exist D:\capcut_adapter_test mkdir D:\capcut_adapter_test
+copy /Y "%cd%\dist\capcut_gui_v11.exe" "D:\capcut_adapter_test\capcut_gui_v11.exe" >nul
 
 echo.
 echo Build done. EXE path:
-echo C:\Users\Admin\capcut_adapter_test\capcut_gui_v10.exe
+echo D:\capcut_adapter_test\capcut_gui_v11.exe
 pause
