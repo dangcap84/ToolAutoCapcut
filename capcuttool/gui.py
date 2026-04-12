@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import queue
 import shutil
 import subprocess
 import sys
 import threading
 import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 import tkinter as tk
 from tkinter import EW, NSEW, filedialog, messagebox, ttk
@@ -28,6 +30,9 @@ STATUS_COLORS = {
     "warning": "#f59e0b",
     "error": "#ef4444",
 }
+TEMPLATE_CACHE_DIR = BASE_DIR / "_template_cache"
+TEMPLATE_CACHE_PROJECT_DIR = TEMPLATE_CACHE_DIR / "project_template"
+TEMPLATE_CACHE_META = TEMPLATE_CACHE_DIR / "template_meta.json"
 
 # UI palette inspired by tool33ai
 ACCENT = "#7c3aed"
@@ -42,7 +47,7 @@ SUBTEXT = "#94a3b8"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v2.0 (build v16)")
+        self.root.title("CapCut Sync v2.1 (build v17)")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -148,6 +153,7 @@ class CapCutGui:
         self.backup_var = tk.BooleanVar(value=True)
         self.batch_voices_root_var = tk.StringVar()
         self.batch_media_root_var = tk.StringVar()
+        self.template_info_var = tk.StringVar(value="Template cache: chưa lưu")
         self.status_var = tk.StringVar(value="Sẵn sàng · Bấm Làm mới, chọn dự án rồi Đồng bộ")
 
         self.project_items: list[tuple[str, str, tk.BooleanVar, ttk.Checkbutton]] = []
@@ -160,12 +166,14 @@ class CapCutGui:
         self.refresh_button: ttk.Button | None = None
         self.sync_button: ttk.Button | None = None
         self.batch_button: ttk.Button | None = None
+        self.save_template_button: ttk.Button | None = None
         self.progress_bar: ttk.Progressbar | None = None
         self.status_badge: ttk.Label | None = None
         self.status_label: ttk.Label | None = None
 
         self._build_layout()
         self._wire_events()
+        self._refresh_template_info_label()
 
         self.root.after(100, self._flush_log)
         self.refresh_projects()
@@ -255,6 +263,15 @@ class CapCutGui:
         ttk.Entry(batch_card, textvariable=self.batch_media_root_var, style="Search.TEntry").grid(row=1, column=1, sticky=EW)
         ttk.Button(batch_card, text="Chọn", style="Ghost.TButton", command=self._pick_batch_media_root, width=8).grid(row=1, column=2, padx=(8, 0))
 
+        self.save_template_button = ttk.Button(
+            batch_card,
+            text="Lưu template",
+            command=self._on_save_template_cache,
+            style="Ghost.TButton",
+            width=12,
+        )
+        self.save_template_button.grid(row=2, column=0, sticky="w", pady=(10, 0))
+
         self.batch_button = ttk.Button(
             batch_card,
             text="Tạo batch",
@@ -262,13 +279,13 @@ class CapCutGui:
             style="Secondary.TButton",
             width=12,
         )
-        self.batch_button.grid(row=2, column=0, sticky="w", pady=(10, 0))
+        self.batch_button.grid(row=2, column=1, sticky="w", pady=(10, 0), padx=(8, 0))
 
         ttk.Label(
             batch_card,
-            text="Template ưu tiên project đang tick; nếu không có mới thử project 'test'.",
+            textvariable=self.template_info_var,
             style="Subtle.TLabel",
-        ).grid(row=2, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(10, 0))
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         projects_card = ttk.Labelframe(
             left_panel,
@@ -437,17 +454,54 @@ class CapCutGui:
             if item.is_file():
                 shutil.copy2(item, dst_dir / item.name)
 
-    def _resolve_template_project(self) -> Path:
-        selected_projects = self._collect_selected_projects()
-        if selected_projects:
-            return Path(selected_projects[0])
+    def _refresh_template_info_label(self) -> None:
+        if TEMPLATE_CACHE_META.exists():
+            try:
+                meta = json.loads(TEMPLATE_CACHE_META.read_text(encoding="utf-8"))
+                source = meta.get("source", "?")
+                saved_at = meta.get("saved_at", "?")
+                self.template_info_var.set(f"Template cache: đã lưu từ '{source}' lúc {saved_at}")
+                return
+            except Exception:
+                pass
+        self.template_info_var.set("Template cache: chưa lưu")
 
-        fallback = DEFAULT_CAPCUT_PROJECT_ROOT / "test"
-        if fallback.exists() and fallback.is_dir():
-            return fallback
+    def _on_save_template_cache(self) -> None:
+        selected_projects = self._collect_selected_projects()
+        if not selected_projects:
+            messagebox.showerror("Thiếu project mẫu", "Hãy tick 1 project để lưu template cache.")
+            return
+
+        source_project = Path(selected_projects[0])
+        if not source_project.exists() or not source_project.is_dir():
+            messagebox.showerror("Project không hợp lệ", "Project mẫu không tồn tại.")
+            return
+
+        try:
+            TEMPLATE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            if TEMPLATE_CACHE_PROJECT_DIR.exists():
+                shutil.rmtree(TEMPLATE_CACHE_PROJECT_DIR)
+            shutil.copytree(source_project, TEMPLATE_CACHE_PROJECT_DIR)
+            meta = {
+                "source": source_project.name,
+                "source_path": str(source_project),
+                "saved_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            }
+            TEMPLATE_CACHE_META.write_text(
+                json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            self._refresh_template_info_label()
+            self._append_log(f"[TEMPLATE] Đã lưu cache từ {source_project}\n")
+            messagebox.showinfo("Lưu template", "Đã lưu template cache thành công.")
+        except Exception as exc:
+            messagebox.showerror("Lưu template lỗi", str(exc))
+
+    def _resolve_template_project(self) -> Path:
+        if TEMPLATE_CACHE_PROJECT_DIR.exists() and TEMPLATE_CACHE_PROJECT_DIR.is_dir():
+            return TEMPLATE_CACHE_PROJECT_DIR
 
         raise ValueError(
-            "Không có template để tạo batch. Hãy tick 1 project làm mẫu trong danh sách."
+            "Chưa có template cache. Hãy tick 1 project rồi bấm 'Lưu template'."
         )
 
     def _build_batch_jobs(self, voices_root: Path, media_root: Path) -> list[tuple[str, Path, Path]]:
@@ -831,6 +885,8 @@ class CapCutGui:
             self.refresh_button.configure(state=new_state)
         if self.batch_button is not None:
             self.batch_button.configure(state=new_state)
+        if self.save_template_button is not None:
+            self.save_template_button.configure(state=new_state)
 
     def _set_status(self, message: str, status_type: str = "info") -> None:
         self.status_var.set(message)
