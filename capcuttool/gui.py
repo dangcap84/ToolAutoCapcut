@@ -240,7 +240,7 @@ class CapCutGui:
 
         batch_card = ttk.Labelframe(
             left_panel,
-            text="Tạo dự án hàng loạt (template: test)",
+            text="Tạo dự án hàng loạt",
             padding=12,
             style="ProjectCard.TLabelframe",
         )
@@ -266,7 +266,7 @@ class CapCutGui:
 
         ttk.Label(
             batch_card,
-            text="Có thư mục con => tạo nhiều project. Không có thư mục con => tạo 1 project.",
+            text="Template ưu tiên project đang tick; nếu không có mới thử project 'test'.",
             style="Subtle.TLabel",
         ).grid(row=2, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(10, 0))
 
@@ -437,6 +437,19 @@ class CapCutGui:
             if item.is_file():
                 shutil.copy2(item, dst_dir / item.name)
 
+    def _resolve_template_project(self) -> Path:
+        selected_projects = self._collect_selected_projects()
+        if selected_projects:
+            return Path(selected_projects[0])
+
+        fallback = DEFAULT_CAPCUT_PROJECT_ROOT / "test"
+        if fallback.exists() and fallback.is_dir():
+            return fallback
+
+        raise ValueError(
+            "Không có template để tạo batch. Hãy tick 1 project làm mẫu trong danh sách."
+        )
+
     def _build_batch_jobs(self, voices_root: Path, media_root: Path) -> list[tuple[str, Path, Path]]:
         voice_children = self._list_child_dirs(voices_root)
         media_children = self._list_child_dirs(media_root)
@@ -473,15 +486,18 @@ class CapCutGui:
             messagebox.showerror("Thiếu thư mục", "Thư mục video/image không hợp lệ.")
             return
 
-        template_project = DEFAULT_CAPCUT_PROJECT_ROOT / "test"
-        if not template_project.exists() or not template_project.is_dir():
-            messagebox.showerror("Thiếu template", "Không tìm thấy project template 'test'.")
+        try:
+            template_project = self._resolve_template_project()
+        except Exception as exc:
+            messagebox.showerror("Thiếu template", str(exc))
             return
 
         self.current_action = "batch_create"
-        self._append_log("\n--- Tạo batch project từ template test ---\n")
-        self._append_log(f"voices_root={voices_root}\nmedia_root={media_root}\n")
-        self._set_status("Đang tạo project hàng loạt từ template test...", "info")
+        self._append_log("\n--- Tạo batch project ---\n")
+        self._append_log(
+            f"template={template_project}\nvoices_root={voices_root}\nmedia_root={media_root}\n"
+        )
+        self._set_status("Đang tạo project hàng loạt từ template...", "info")
         self._set_running_state(True)
         self.current_task_running = True
 
