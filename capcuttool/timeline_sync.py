@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
+from uuid import uuid4
 
 
 @dataclass
@@ -68,12 +70,39 @@ def _select_track_with_most_segments(tracks: List[Dict[str, Any]], wanted: str) 
     return candidates[0][1]
 
 
-def _update_track_segments(track: Dict[str, Any], durations_us: List[int]) -> int:
+def _clone_segment_template(seg: Dict[str, Any]) -> Dict[str, Any]:
+    cloned = copy.deepcopy(seg)
+    if "id" in cloned:
+        cloned["id"] = str(uuid4())
+    if "segment_id" in cloned:
+        cloned["segment_id"] = str(uuid4())
+    return cloned
+
+
+def _normalize_track_segment_count(track: Dict[str, Any], target_count: int) -> List[Dict[str, Any]]:
     segs = _sort_by_target_start(_segments_of(track))
-    count = min(len(segs), len(durations_us))
+    if target_count <= 0:
+        track["segments"] = []
+        return []
+
+    if not segs:
+        raise ValueError("Chosen track has no segments")
+
+    if len(segs) > target_count:
+        segs = segs[:target_count]
+    elif len(segs) < target_count:
+        template = segs[-1]
+        while len(segs) < target_count:
+            segs.append(_clone_segment_template(template))
+
+    track["segments"] = segs
+    return segs
+
+
+def _update_track_segments(track: Dict[str, Any], durations_us: List[int]) -> int:
+    segs = _normalize_track_segment_count(track, len(durations_us))
     cursor = 0
-    for i in range(count):
-        seg = segs[i]
+    for i, seg in enumerate(segs):
         d = int(durations_us[i])
 
         tgt = seg.setdefault("target_timerange", {})
@@ -84,7 +113,7 @@ def _update_track_segments(track: Dict[str, Any], durations_us: List[int]) -> in
         src["duration"] = d
 
         cursor += d
-    return count
+    return len(segs)
 
 
 def _update_project_duration_fields(draft: Dict[str, Any], total_duration_us: int) -> None:
@@ -106,15 +135,10 @@ def sync_draft(draft: Dict[str, Any], durations_us: List[int]) -> SyncStats:
     if video_track is None:
         raise ValueError("Cannot find any usable video track")
 
-    video_seg_count = len(_segments_of(video_track))
-    if video_seg_count <= 0:
-        raise ValueError("Chosen video track has no segments")
+    scene_count = source_scene_count
+    total = sum(durations_us)
 
-    effective_durations = durations_us[:video_seg_count]
-    scene_count = len(effective_durations)
-    total = sum(effective_durations)
-
-    v_updated = _update_track_segments(video_track, effective_durations)
+    v_updated = _update_track_segments(video_track, durations_us)
 
     audio_track = _select_track_with_segments(tracks, "audio", scene_count)
     if audio_track is None:
@@ -122,7 +146,7 @@ def sync_draft(draft: Dict[str, Any], durations_us: List[int]) -> SyncStats:
 
     a_updated = 0
     if audio_track is not None:
-        a_updated = _update_track_segments(audio_track, effective_durations)
+        a_updated = _update_track_segments(audio_track, durations_us)
 
     _update_project_duration_fields(draft, total)
 
