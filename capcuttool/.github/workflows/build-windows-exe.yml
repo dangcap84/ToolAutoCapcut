@@ -1,0 +1,71 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'cli.py'
+      - 'project_loader.py'
+      - 'media_index.py'
+      - 'duration_probe.py'
+      - 'timeline_sync.py'
+      - 'project_writer.py'
+      - 'requirements.txt'
+      - '.github/workflows/build-windows-exe.yml'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build EXE via PyInstaller
+        shell: pwsh
+        run: |
+          pyinstaller --onefile --name capcut_adapter cli.py
+
+      - name: Verify build output
+        shell: pwsh
+        run: |
+          if (!(Test-Path "dist/capcut_adapter.exe")) {
+            throw "dist/capcut_adapter.exe not found"
+          }
+          Get-Item "dist/capcut_adapter.exe" | Format-List FullName,Length,LastWriteTime
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: capcut_adapter_windows_exe
+          path: dist/capcut_adapter.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload PyInstaller spec (if generated)
+        uses: actions/upload-artifact@v4
+        with:
+          name: capcut_adapter_build_metadata
+          path: |
+            capcut_adapter.spec
+            build/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Build summary
+        shell: pwsh
+        run: |
+          "✅ Windows EXE build completed for commit $env:GITHUB_SHA" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "Artifact: capcut_adapter_windows_exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "Entry: cli.py" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
