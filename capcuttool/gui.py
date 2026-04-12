@@ -15,7 +15,7 @@ import tkinter as tk
 from tkinter import EW, NSEW, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
-from cli import run_inspect, run_sync
+from cli import run_sync
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CAPCUT_PROJECT_ROOT = Path(
@@ -41,7 +41,7 @@ SUBTEXT = "#94a3b8"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v1.6 (build v12)")
+        self.root.title("CapCut Sync v1.7 (build v13)")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -144,21 +144,17 @@ class CapCutGui:
         self.voices_var = tk.StringVar()
         self.mode_var = tk.StringVar(value="sync")
         self.backup_var = tk.BooleanVar(value=True)
-        self.status_var = tk.StringVar(value="Ready · Refresh projects, select from grid, then Sync")
+        self.status_var = tk.StringVar(value="Sẵn sàng · Bấm Làm mới, chọn dự án rồi Đồng bộ")
 
         self.project_items: list[tuple[str, str, tk.BooleanVar, ttk.Checkbutton]] = []
-        self.project_search_var = tk.StringVar()
-        self.project_stats_var = tk.StringVar(value="0 selected")
+        self.project_stats_var = tk.StringVar(value="Đã chọn 0/0 dự án")
 
         self.projects_canvas: tk.Canvas | None = None
         self.projects_container: ttk.Frame | None = None
         self.projects_canvas_window: int | None = None
         self.projects_scroll: ttk.Scrollbar | None = None
         self.refresh_button: ttk.Button | None = None
-        self.inspect_button: ttk.Button | None = None
         self.sync_button: ttk.Button | None = None
-        self.select_all_button: ttk.Button | None = None
-        self.clear_all_button: ttk.Button | None = None
         self.progress_bar: ttk.Progressbar | None = None
         self.status_badge: ttk.Label | None = None
         self.status_label: ttk.Label | None = None
@@ -181,12 +177,12 @@ class CapCutGui:
         header.grid(row=0, column=0, columnspan=2, sticky=EW)
         header.columnconfigure(0, weight=1)
 
-        ttk.Label(header, text="CapCut Project Sync", style="AppTitle.TLabel").grid(
+        ttk.Label(header, text="Đồng bộ dự án CapCut", style="AppTitle.TLabel").grid(
             row=0, column=0, sticky="w"
         )
         ttk.Label(
             header,
-            text="Refresh → filter/select projects → Inspect/Sync",
+            text="Làm mới danh sách → chọn dự án → Đồng bộ",
             style="Subtle.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(4, 0))
 
@@ -197,99 +193,64 @@ class CapCutGui:
 
         action_card = ttk.Labelframe(
             left_panel,
-            text="Actions",
+            text="Thao tác",
             padding=14,
             style="ProjectCard.TLabelframe",
         )
         action_card.grid(row=0, column=0, sticky=EW)
-        action_card.columnconfigure(2, weight=1)
+        action_card.columnconfigure(1, weight=1)
 
-        ttk.Label(action_card, text="Quick flow", style="SectionTitle.TLabel").grid(
+        ttk.Label(action_card, text="Thao tác", style="SectionTitle.TLabel").grid(
             row=0, column=0, sticky="w", pady=(0, 8)
         )
         ttk.Label(
             action_card,
-            text="Run a safe Inspect first, then Sync once output looks good.",
+            text="Chỉ cần Làm mới và Đồng bộ theo dự án đã chọn.",
             style="Subtle.TLabel",
-        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 12))
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 12))
 
         self.refresh_button = ttk.Button(
             action_card,
-            text="Refresh",
+            text="Làm mới",
             command=self.refresh_projects,
             width=12,
             style="Secondary.TButton",
         )
         self.refresh_button.grid(row=2, column=0, sticky="w")
 
-        self.inspect_button = ttk.Button(
-            action_card,
-            text="Inspect",
-            command=self._on_inspect_audio,
-            width=12,
-            style="Secondary.TButton",
-        )
-        self.inspect_button.grid(row=2, column=1, sticky="w", padx=(8, 0))
-
         self.sync_button = ttk.Button(
             action_card,
-            text="Sync",
+            text="Đồng bộ",
             command=self._on_sync_audio,
             width=12,
             style="Accent.TButton",
         )
-        self.sync_button.grid(row=2, column=2, sticky="w", padx=(8, 0))
+        self.sync_button.grid(row=2, column=1, sticky="w", padx=(8, 0))
 
         ttk.Label(
             action_card,
-            text=f"CapCut root: {DEFAULT_CAPCUT_PROJECT_ROOT}",
+            text=f"Thư mục dự án CapCut: {DEFAULT_CAPCUT_PROJECT_ROOT}",
             style="Subtle.TLabel",
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         projects_card = ttk.Labelframe(
             left_panel,
-            text="Projects",
+            text="Danh sách dự án",
             padding=12,
             style="ProjectCard.TLabelframe",
         )
         projects_card.grid(row=1, column=0, sticky=NSEW, pady=(14, 0))
         projects_card.columnconfigure(0, weight=1)
-        projects_card.rowconfigure(2, weight=1)
-
-        toolbar = ttk.Frame(projects_card, style="Panel.TFrame")
-        toolbar.grid(row=0, column=0, sticky=EW, pady=(0, 8))
-        toolbar.columnconfigure(1, weight=1)
-
-        ttk.Label(toolbar, text="Find:", style="Subtle.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        search_entry = ttk.Entry(toolbar, textvariable=self.project_search_var, style="Search.TEntry")
-        search_entry.grid(row=0, column=1, sticky=EW)
-
-        self.select_all_button = ttk.Button(
-            toolbar,
-            text="All",
-            command=self._select_all_projects,
-            style="Ghost.TButton",
-            width=6,
-        )
-        self.select_all_button.grid(row=0, column=2, sticky="e", padx=(8, 4))
-
-        self.clear_all_button = ttk.Button(
-            toolbar,
-            text="Clear",
-            command=self._clear_all_projects,
-            style="Ghost.TButton",
-            width=6,
-        )
-        self.clear_all_button.grid(row=0, column=3, sticky="e")
+        projects_card.rowconfigure(1, weight=1)
 
         ttk.Label(
             projects_card,
             textvariable=self.project_stats_var,
             style="Subtle.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(0, 8))
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
 
         list_host = ttk.Frame(projects_card, style="Panel.TFrame")
-        list_host.grid(row=2, column=0, sticky=NSEW)
+        list_host.grid(row=1, column=0, sticky=NSEW)
         list_host.columnconfigure(0, weight=1)
         list_host.rowconfigure(0, weight=1)
 
@@ -318,7 +279,7 @@ class CapCutGui:
 
         log_card = ttk.Labelframe(
             right_panel,
-            text="Run Log",
+            text="Nhật ký chạy",
             padding=12,
             style="ProjectCard.TLabelframe",
         )
@@ -328,7 +289,7 @@ class CapCutGui:
 
         ttk.Label(
             log_card,
-            text="Live inspect/sync output + errors.",
+            text="Hiển thị log đồng bộ và lỗi (nếu có).",
             style="Subtle.TLabel",
         ).grid(row=0, column=0, sticky="w", pady=(0, 8))
 
@@ -351,7 +312,7 @@ class CapCutGui:
         status_card.grid(row=2, column=0, columnspan=2, sticky=EW, pady=(12, 0))
         status_card.columnconfigure(1, weight=1)
 
-        self.status_badge = ttk.Label(status_card, text="READY", style="Badge.TLabel")
+        self.status_badge = ttk.Label(status_card, text="THÔNG TIN", style="Badge.TLabel")
         self.status_badge.grid(row=0, column=0, sticky="w")
 
         self.status_label = ttk.Label(
@@ -371,7 +332,6 @@ class CapCutGui:
             self.projects_canvas.bind_all("<MouseWheel>", self._on_projects_mousewheel)
         if self.projects_container is not None:
             self.projects_container.bind("<Configure>", self._on_projects_container_configure)
-        self.project_search_var.trace_add("write", self._on_search_change)
 
     def _on_projects_canvas_configure(self, event) -> None:
         if self.projects_canvas is None or self.projects_canvas_window is None:
@@ -390,49 +350,13 @@ class CapCutGui:
         self.projects_canvas.yview_scroll(delta, "units")
         return "break"
 
-    def _select_all_projects(self, _event=None):
-        for _, _, var, _ in self.project_items:
-            var.set(True)
-        self._update_project_stats()
-        return "break"
-
-    def _clear_all_projects(self, _event=None):
-        for _, _, var, _ in self.project_items:
-            var.set(False)
-        self._update_project_stats()
-        return "break"
-
-    def _on_search_change(self, *_args) -> None:
-        self._apply_project_filter()
-
     def _toggle_project(self) -> None:
         self._update_project_stats()
 
-    def _apply_project_filter(self) -> None:
-        if self.projects_container is None:
-            return
-
-        keyword = self.project_search_var.get().strip().lower()
-        visible_row = 0
-        visible_count = 0
-
-        for _, name, _, widget in self.project_items:
-            show = keyword in name.lower() if keyword else True
-            if show:
-                widget.grid(row=visible_row, column=0, sticky=EW, pady=(0, 2))
-                visible_row += 1
-                visible_count += 1
-            else:
-                widget.grid_remove()
-
-        self._update_project_stats(visible_count=visible_count)
-        self._on_projects_container_configure()
-
-    def _update_project_stats(self, visible_count: int | None = None) -> None:
+    def _update_project_stats(self) -> None:
         total = len(self.project_items)
         selected = sum(1 for _, _, var, _ in self.project_items if var.get())
-        visible = visible_count if visible_count is not None else sum(1 for _, _, _, widget in self.project_items if widget.winfo_manager())
-        self.project_stats_var.set(f"Selected {selected}/{total} · Visible {visible}")
+        self.project_stats_var.set(f"Đã chọn {selected}/{total} dự án")
 
     def _collect_selected_projects(self) -> list[str]:
         out: list[str] = []
@@ -488,10 +412,6 @@ class CapCutGui:
 
         return resolved_images, resolved_voices
 
-    def _on_inspect_audio(self) -> None:
-        self.mode_var.set("inspect")
-        self._start_run()
-
     def _on_sync_audio(self) -> None:
         self.mode_var.set("sync")
         self._start_run()
@@ -507,22 +427,21 @@ class CapCutGui:
         selected_projects = self._collect_selected_projects()
 
         if not selected_projects:
-            messagebox.showerror("No projects selected", "Select at least one CapCut project from the grid.")
+            messagebox.showerror("Chưa chọn dự án", "Vui lòng chọn ít nhất 1 dự án trong danh sách.")
             return
 
         try:
             if images and voices and len(selected_projects) == 1:
                 images, voices = self._resolve_media_dirs(selected_projects[0], images, voices)
         except Exception as exc:
-            messagebox.showerror("Missing media folders", str(exc))
+            messagebox.showerror("Thiếu thư mục media", str(exc))
             return
 
         self._append_log("\n--- Running CLI task ---\n")
         self._append_log(
             f"mode={mode} projects={len(selected_projects)} images={images or '[auto]'} voices={voices or '[auto]'} backup={self.backup_var.get()}\n"
         )
-        mode_label = "Inspect" if mode == "inspect" else "Sync"
-        self._set_status(f"Running {mode_label} for {len(selected_projects)} selected project(s)...", "info")
+        self._set_status(f"Đang đồng bộ {len(selected_projects)} dự án đã chọn...", "info")
         self._set_running_state(True)
 
         if getattr(sys, "frozen", False) or len(selected_projects) > 1:
@@ -560,11 +479,11 @@ class CapCutGui:
         self.project_items = []
 
         if not DEFAULT_CAPCUT_PROJECT_ROOT.exists():
-            self.project_stats_var.set("Selected 0/0 · Visible 0")
+            self.project_stats_var.set("Đã chọn 0/0 dự án")
             self._append_log(
-                f'Default CapCut root "{DEFAULT_CAPCUT_PROJECT_ROOT}" not found. Refresh once Windows volume is available.\n'
+                f'Không tìm thấy thư mục dự án mặc định "{DEFAULT_CAPCUT_PROJECT_ROOT}".\n'
             )
-            self._set_status("CapCut root not found", "warning")
+            self._set_status("Không tìm thấy thư mục dự án CapCut", "warning")
             return
 
         entries = sorted(item for item in DEFAULT_CAPCUT_PROJECT_ROOT.iterdir() if item.is_dir())
@@ -590,16 +509,16 @@ class CapCutGui:
             filtered.append(entry)
 
         if skipped:
-            self._append_log(f"Skipped {skipped} non-project folders from list.\n")
+            self._append_log(f"Đã bỏ qua {skipped} thư mục không phải project.\n")
 
         if not filtered:
-            self.project_stats_var.set("Selected 0/0 · Visible 0")
-            self._append_log(f"No CapCut projects found inside {DEFAULT_CAPCUT_PROJECT_ROOT}.\n")
-            self._set_status("No projects found", "warning")
+            self.project_stats_var.set("Đã chọn 0/0 dự án")
+            self._append_log(f"Không tìm thấy dự án CapCut trong {DEFAULT_CAPCUT_PROJECT_ROOT}.\n")
+            self._set_status("Không có dự án", "warning")
             return
 
         for entry in filtered:
-            project_var = tk.BooleanVar(value=True)
+            project_var = tk.BooleanVar(value=False)
             label = ttk.Checkbutton(
                 self.projects_container,
                 text=entry.name,
@@ -611,8 +530,11 @@ class CapCutGui:
             )
             self.project_items.append((str(entry), entry.name, project_var, label))
 
-        self._apply_project_filter()
-        self._set_status(f"Project list refreshed · {len(filtered)} project(s) ready", "info")
+        for row, (_, _, _, label) in enumerate(self.project_items):
+            label.grid(row=row, column=0, sticky=EW, pady=(0, 4), padx=(0, 2))
+
+        self._update_project_stats()
+        self._set_status(f"Đã làm mới danh sách · sẵn sàng {len(filtered)} dự án", "info")
 
     def _execute_embedded_batch(
         self, projects: list[str], images: str, voices: str, mode: str, backup: bool
@@ -631,19 +553,12 @@ class CapCutGui:
                     print(f"--- project {idx}/{len(projects)}: {project} ---")
                     print(f"images={resolved_images or '[auto]'}")
                     print(f"voices={resolved_voices or '[auto]'}")
-                    if mode == "inspect":
-                        code = run_inspect(
-                            Path(project),
-                            Path(resolved_images) if resolved_images else None,
-                            Path(resolved_voices) if resolved_voices else None,
-                        )
-                    else:
-                        code = run_sync(
-                            Path(project),
-                            Path(resolved_images) if resolved_images else None,
-                            Path(resolved_voices) if resolved_voices else None,
-                            backup,
-                        )
+                    code = run_sync(
+                        Path(project),
+                        Path(resolved_images) if resolved_images else None,
+                        Path(resolved_voices) if resolved_voices else None,
+                        backup,
+                    )
                     if code != 0:
                         overall_code = code
                         break
@@ -696,13 +611,13 @@ class CapCutGui:
         self._set_running_state(False)
 
         if return_code == 0:
-            self._set_status("Run completed successfully", "success")
-            self._show_toast("Sync complete", "Selected project sync finished successfully.", "success")
-            messagebox.showinfo("Sync complete", "Selected project sync finished successfully.")
+            self._set_status("Đồng bộ thành công", "success")
+            self._show_toast("Đồng bộ xong", "Đã đồng bộ các dự án đã chọn thành công.", "success")
+            messagebox.showinfo("Đồng bộ xong", "Đã đồng bộ các dự án đã chọn thành công.")
         else:
-            self._set_status(f"Run failed (exit {return_code})", "error")
-            self._show_toast("Sync failed", f"Run failed with exit code {return_code}.", "danger")
-            messagebox.showerror("Sync failed", f"Run failed with exit code {return_code}. Check the run log.")
+            self._set_status(f"Đồng bộ lỗi (mã {return_code})", "error")
+            self._show_toast("Đồng bộ lỗi", f"Tiến trình lỗi với mã {return_code}.", "danger")
+            messagebox.showerror("Đồng bộ lỗi", f"Tiến trình lỗi với mã {return_code}. Xem nhật ký chạy để biết chi tiết.")
 
         self._append_log(f"\n--- Process exited with code {return_code} ---\n")
 
@@ -716,18 +631,13 @@ class CapCutGui:
         new_state = "disabled" if running else "normal"
         if self.sync_button is not None:
             self.sync_button.configure(state=new_state)
-        if self.inspect_button is not None:
-            self.inspect_button.configure(state=new_state)
         if self.refresh_button is not None:
             self.refresh_button.configure(state=new_state)
-        if self.select_all_button is not None:
-            self.select_all_button.configure(state=new_state)
-        if self.clear_all_button is not None:
-            self.clear_all_button.configure(state=new_state)
 
     def _set_status(self, message: str, status_type: str = "info") -> None:
         self.status_var.set(message)
-        badge_text = status_type.upper()
+        badge_map = {"info": "THÔNG TIN", "success": "THÀNH CÔNG", "warning": "CẢNH BÁO", "error": "LỖI"}
+        badge_text = badge_map.get(status_type, "THÔNG TIN")
         badge_color = STATUS_COLORS.get(status_type, STATUS_COLORS["info"])
         if self.status_badge is not None:
             self.status_badge.configure(text=badge_text, background=badge_color)
@@ -747,16 +657,16 @@ class CapCutGui:
     def _on_close(self) -> None:
         if self.current_process:
             if not messagebox.askyesno(
-                "Stop process?",
-                "A CLI run is still running. Stop it and close?",
+                "Dừng tiến trình?",
+                "Đang có tiến trình chạy. Dừng và đóng ứng dụng?",
             ):
                 return
             self.current_process.terminate()
 
         if self.current_task_running:
             if not messagebox.askyesno(
-                "Close app?",
-                "A task is still running. Close anyway?",
+                "Đóng ứng dụng?",
+                "Tiến trình vẫn đang chạy. Bạn vẫn muốn đóng không?",
             ):
                 return
 
