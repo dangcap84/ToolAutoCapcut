@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import List
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
+MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
 
 
 @dataclass
@@ -31,11 +33,11 @@ def _scan_dir(folder: Path, exts: set[str]) -> List[Path]:
 
 
 def build_scene_pairs(images_dir: Path, voices_dir: Path) -> List[SceneMedia]:
-    images = _scan_dir(images_dir, IMAGE_EXTS)
+    images = _scan_dir(images_dir, MEDIA_EXTS)
     voices = _scan_dir(voices_dir, AUDIO_EXTS)
 
     if not images:
-        raise ValueError(f"No image files found in: {images_dir}")
+        raise ValueError(f"No image/video files found in: {images_dir}")
     if not voices:
         raise ValueError(f"No voice files found in: {voices_dir}")
     if len(images) != len(voices):
