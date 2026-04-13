@@ -56,7 +56,7 @@ SUBTEXT = "#94a3b8"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v2.8")
+        self.root.title("CapCut Sync v2.9")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -211,23 +211,40 @@ class CapCutGui:
         left_panel = ttk.Frame(main_frame, style="Panel.TFrame")
         left_panel.grid(row=1, column=0, sticky=NSEW, padx=(0, 14))
         left_panel.columnconfigure(0, weight=1)
-        left_panel.rowconfigure(2, weight=1)
+        left_panel.rowconfigure(1, weight=1)
+
+        ttk.Label(
+            left_panel,
+            text="Điều hướng chức năng",
+            style="SectionTitle.TLabel",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        nav_tabs = ttk.Notebook(left_panel)
+        nav_tabs.grid(row=1, column=0, sticky=NSEW)
+
+        sync_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
+        create_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
+        sync_tab.columnconfigure(0, weight=1)
+        create_tab.columnconfigure(0, weight=1)
+
+        nav_tabs.add(create_tab, text="Tạo dự án")
+        nav_tabs.add(sync_tab, text="Đồng bộ")
 
         action_card = ttk.Labelframe(
-            left_panel,
-            text="Thao tác",
+            sync_tab,
+            text="Thao tác đồng bộ",
             padding=14,
             style="ProjectCard.TLabelframe",
         )
         action_card.grid(row=0, column=0, sticky=EW)
         action_card.columnconfigure(1, weight=1)
 
-        ttk.Label(action_card, text="Thao tác", style="SectionTitle.TLabel").grid(
+        ttk.Label(action_card, text="Đồng bộ", style="SectionTitle.TLabel").grid(
             row=0, column=0, sticky="w", pady=(0, 8)
         )
         ttk.Label(
             action_card,
-            text="Đồng bộ dự án đã chọn hoặc tạo batch từ thư mục voice/video-image.",
+            text="Làm mới danh sách dự án rồi bấm Đồng bộ cho dự án đã chọn.",
             style="Subtle.TLabel",
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 12))
 
@@ -256,12 +273,12 @@ class CapCutGui:
         ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         batch_card = ttk.Labelframe(
-            left_panel,
+            create_tab,
             text="Tạo dự án hàng loạt",
             padding=12,
             style="ProjectCard.TLabelframe",
         )
-        batch_card.grid(row=1, column=0, sticky=EW, pady=(12, 0))
+        batch_card.grid(row=0, column=0, sticky=EW)
         batch_card.columnconfigure(1, weight=1)
 
         ttk.Label(batch_card, text="Thư mục voice:", style="Subtle.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 6))
