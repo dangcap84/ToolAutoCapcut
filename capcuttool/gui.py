@@ -634,10 +634,7 @@ class CapCutGui:
 
                     print(f"images={images_dir}")
                     print(f"voices={voices_dir}")
-                    code = run_sync(new_project, images_dir, voices_dir, True)
-                    if code != 0:
-                        overall_code = code
-                        break
+                    print(f"created_project={new_project}")
         except Exception:
             output_buf.write(traceback.format_exc())
             overall_code = 1
@@ -899,7 +896,7 @@ class CapCutGui:
         is_batch = self.current_action == "batch_create"
         success_title = "Tạo batch xong" if is_batch else "Đồng bộ xong"
         success_message = (
-            "Đã tạo project hàng loạt và đồng bộ thành công."
+            "Đã tạo project hàng loạt thành công."
             if is_batch
             else "Đã đồng bộ các dự án đã chọn thành công."
         )
