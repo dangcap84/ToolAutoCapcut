@@ -50,7 +50,7 @@ SUBTEXT = "#94a3b8"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v2.5")
+        self.root.title("CapCut Sync v2.6")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -156,6 +156,7 @@ class CapCutGui:
         self.backup_var = tk.BooleanVar(value=True)
         self.batch_voices_root_var = tk.StringVar()
         self.batch_media_root_var = tk.StringVar()
+        self.batch_project_name_var = tk.StringVar()
         self.template_info_var = tk.StringVar(value="Template cache: chưa lưu")
         self.status_var = tk.StringVar(value="Sẵn sàng · Bấm Làm mới, chọn dự án rồi Đồng bộ")
 
@@ -265,6 +266,9 @@ class CapCutGui:
         ttk.Entry(batch_card, textvariable=self.batch_media_root_var, style="Search.TEntry").grid(row=1, column=1, sticky=EW)
         ttk.Button(batch_card, text="Chọn", style="Ghost.TButton", command=self._pick_batch_media_root, width=8).grid(row=1, column=2, padx=(8, 0))
 
+        ttk.Label(batch_card, text="Tên project (tuỳ chọn):", style="Subtle.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(6, 0))
+        ttk.Entry(batch_card, textvariable=self.batch_project_name_var, style="Search.TEntry").grid(row=2, column=1, sticky=EW, pady=(6, 0))
+
         self.batch_button = ttk.Button(
             batch_card,
             text="Tạo batch",
@@ -272,13 +276,13 @@ class CapCutGui:
             style="Secondary.TButton",
             width=12,
         )
-        self.batch_button.grid(row=2, column=0, sticky="w", pady=(10, 0))
+        self.batch_button.grid(row=3, column=0, sticky="w", pady=(10, 0))
 
         ttk.Label(
             batch_card,
             textvariable=self.template_info_var,
             style="Subtle.TLabel",
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         projects_card = ttk.Labelframe(
             left_panel,
@@ -531,13 +535,14 @@ class CapCutGui:
         self.log_queue.put(f"[TEMPLATE] Auto-cache từ {source}\n")
         return TEMPLATE_CACHE_PROJECT_DIR
 
-    def _build_batch_jobs(self, voices_root: Path, media_root: Path) -> list[tuple[str, Path, Path]]:
+    def _build_batch_jobs(self, voices_root: Path, media_root: Path, project_name: str) -> list[tuple[str, Path, Path]]:
         voice_children = self._list_child_dirs(voices_root)
         media_children = self._list_child_dirs(media_root)
 
         has_subfolders = bool(voice_children or media_children)
         if not has_subfolders:
-            return [(voices_root.name or "project_moi", voices_root, media_root)]
+            base = project_name.strip() or voices_root.name or "project_moi"
+            return [(base, voices_root, media_root)]
 
         media_map = {p.name.lower(): p for p in media_children}
         jobs: list[tuple[str, Path, Path]] = []
@@ -546,7 +551,10 @@ class CapCutGui:
             if m is None:
                 self.log_queue.put(f"[BATCH] Bỏ qua '{v.name}' vì không có thư mục media trùng tên.\n")
                 continue
-            jobs.append((v.name, v, m))
+            if project_name.strip():
+                jobs.append((f"{project_name.strip()}_{v.name}", v, m))
+            else:
+                jobs.append((v.name, v, m))
 
         if not jobs:
             raise ValueError("Không tìm thấy cặp thư mục con trùng tên giữa voice và video/image.")
@@ -559,6 +567,7 @@ class CapCutGui:
 
         voices_root = Path(self.batch_voices_root_var.get().strip())
         media_root = Path(self.batch_media_root_var.get().strip())
+        project_name = self.batch_project_name_var.get().strip()
 
         if not voices_root.exists() or not voices_root.is_dir():
             messagebox.showerror("Thiếu thư mục", "Thư mục voice không hợp lệ.")
@@ -601,7 +610,7 @@ class CapCutGui:
         self.current_action = "batch_create"
         self._append_log("\n--- Tạo batch project ---\n")
         self._append_log(
-            f"template={template_project}\nvoices_root={voices_root}\nmedia_root={media_root}\n"
+            f"template={template_project}\nvoices_root={voices_root}\nmedia_root={media_root}\nproject_name={project_name or '[auto]'}\n"
         )
         self._set_status("Đang tạo project hàng loạt từ template...", "info")
         self._set_running_state(True)
@@ -609,15 +618,15 @@ class CapCutGui:
 
         threading.Thread(
             target=self._execute_batch_create,
-            args=(template_project, voices_root, media_root),
+            args=(template_project, voices_root, media_root, project_name),
             daemon=True,
         ).start()
 
-    def _execute_batch_create(self, template_project: Path, voices_root: Path, media_root: Path) -> None:
+    def _execute_batch_create(self, template_project: Path, voices_root: Path, media_root: Path, project_name: str) -> None:
         output_buf = io.StringIO()
         overall_code = 0
         try:
-            jobs = self._build_batch_jobs(voices_root, media_root)
+            jobs = self._build_batch_jobs(voices_root, media_root, project_name)
             with contextlib.redirect_stdout(output_buf):
                 print(f"batch_jobs={len(jobs)}")
                 for idx, (name, v_dir, m_dir) in enumerate(jobs, start=1):
