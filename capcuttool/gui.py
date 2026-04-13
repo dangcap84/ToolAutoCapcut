@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import io
 import json
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -17,8 +19,12 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import EW, NSEW, filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
+from uuid import uuid4
 
 from cli import run_sync
+from duration_probe import probe_audio_duration_seconds
+from media_index import AUDIO_EXTS, MEDIA_EXTS, VIDEO_EXTS
+from timeline_sync import sec_to_us
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CAPCUT_PROJECT_ROOT = Path(
@@ -50,7 +56,7 @@ SUBTEXT = "#94a3b8"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v2.6")
+        self.root.title("CapCut Sync v2.7")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -451,6 +457,177 @@ class CapCutGui:
             if item.is_file():
                 shutil.copy2(item, dst_dir / item.name)
 
+    def _extract_index(self, name: str) -> int:
+        nums = re.findall(r"\d+", name)
+        if not nums:
+            return -1
+        return int(nums[-1])
+
+    def _scan_files(self, folder: Path, exts: set[str]) -> list[Path]:
+        if not folder.exists() or not folder.is_dir():
+            return []
+        files = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in exts]
+        return sorted(files, key=lambda p: (self._extract_index(p.stem), p.name.lower()))
+
+    def _probe_media_duration_us(self, path: Path) -> int:
+        ext = path.suffix.lower()
+        if ext in VIDEO_EXTS:
+            try:
+                return sec_to_us(probe_audio_duration_seconds(path))
+            except Exception:
+                return 5_000_000
+        return 5_000_000
+
+    def _clone_with_new_id(self, template_obj: dict) -> dict:
+        obj = copy.deepcopy(template_obj) if isinstance(template_obj, dict) else {}
+        obj["id"] = str(uuid4()).upper()
+        return obj
+
+    def _get_or_create_track(self, draft: dict, track_type: str) -> dict:
+        tracks = draft.get("tracks")
+        if not isinstance(tracks, list):
+            tracks = []
+            draft["tracks"] = tracks
+
+        for tr in tracks:
+            if str(tr.get("type") or tr.get("track_type") or "").lower() == track_type:
+                if not isinstance(tr.get("segments"), list):
+                    tr["segments"] = []
+                return tr
+
+        tr = {"type": track_type, "segments": []}
+        tracks.append(tr)
+        return tr
+
+    def _fill_project_draft_with_inputs(self, draft: dict, media_dir: Path, voice_dir: Path) -> tuple[int, int]:
+        media_files = self._scan_files(media_dir, MEDIA_EXTS)
+        voice_files = self._scan_files(voice_dir, AUDIO_EXTS)
+
+        if not media_files:
+            raise ValueError(f"Không có file video/ảnh trong: {media_dir}")
+        if not voice_files:
+            raise ValueError(f"Không có file voice trong: {voice_dir}")
+
+        materials = draft.get("materials")
+        if not isinstance(materials, dict):
+            materials = {}
+            draft["materials"] = materials
+
+        template_video_mat = (materials.get("videos") or [{}])[0] if isinstance(materials.get("videos"), list) else {}
+        template_audio_mat = (materials.get("audios") or [{}])[0] if isinstance(materials.get("audios"), list) else {}
+        template_canvas_mat = (materials.get("canvases") or [{}])[0] if isinstance(materials.get("canvases"), list) else {}
+
+        video_track = self._get_or_create_track(draft, "video")
+        audio_track = self._get_or_create_track(draft, "audio")
+
+        template_video_seg = (video_track.get("segments") or [{}])[0] if isinstance(video_track.get("segments"), list) else {}
+        template_audio_seg = (audio_track.get("segments") or [{}])[0] if isinstance(audio_track.get("segments"), list) else {}
+
+        videos: list[dict] = []
+        audios: list[dict] = []
+        canvases: list[dict] = []
+
+        for mf in media_files:
+            mid = str(uuid4()).upper()
+            dur = self._probe_media_duration_us(mf)
+
+            vm = self._clone_with_new_id(template_video_mat)
+            vm["id"] = mid
+            vm["type"] = "video"
+            vm["path"] = str(mf).replace("\\", "/")
+            vm["material_name"] = mf.name
+            vm["duration"] = int(dur)
+            videos.append(vm)
+
+            cm = self._clone_with_new_id(template_canvas_mat)
+            cm["type"] = cm.get("type") or "canvas_color"
+            canvases.append(cm)
+
+        for af in voice_files:
+            aid = str(uuid4()).upper()
+            dur = sec_to_us(probe_audio_duration_seconds(af))
+
+            am = self._clone_with_new_id(template_audio_mat)
+            am["id"] = aid
+            am["type"] = am.get("type") or "extract_music"
+            am["path"] = str(af).replace("\\", "/")
+            am["name"] = af.name
+            am["duration"] = int(dur)
+            audios.append(am)
+
+        materials["videos"] = videos
+        materials["audios"] = audios
+        materials["canvases"] = canvases
+
+        v_segments: list[dict] = []
+        v_cursor = 0
+        for idx, vm in enumerate(videos):
+            dur = int(vm.get("duration") or 5_000_000)
+            seg = self._clone_with_new_id(template_video_seg)
+            seg["material_id"] = vm["id"]
+            seg["target_timerange"] = {"start": v_cursor, "duration": dur}
+            seg["source_timerange"] = {"start": 0, "duration": dur}
+            seg["render_index"] = idx
+            seg["track_render_index"] = 0
+            v_segments.append(seg)
+            v_cursor += dur
+
+        a_segments: list[dict] = []
+        a_cursor = 0
+        for idx, am in enumerate(audios):
+            dur = int(am.get("duration") or 0)
+            seg = self._clone_with_new_id(template_audio_seg)
+            seg["material_id"] = am["id"]
+            seg["target_timerange"] = {"start": a_cursor, "duration": dur}
+            seg["source_timerange"] = {"start": 0, "duration": dur}
+            seg["render_index"] = idx
+            seg["track_render_index"] = 1
+            a_segments.append(seg)
+            a_cursor += dur
+
+        video_track["segments"] = v_segments
+        audio_track["segments"] = a_segments
+
+        total_us = max(v_cursor, a_cursor)
+        for k in ["duration", "tm_duration", "max_duration", "draft_duration"]:
+            if isinstance(draft.get(k), (int, float)):
+                draft[k] = int(total_us)
+
+        return len(videos), len(audios)
+
+    def _hydrate_project_drafts_with_inputs(self, project_dir: Path, media_dir: Path, voice_dir: Path) -> tuple[int, int]:
+        main_draft = project_dir / "draft_content.json"
+        if not main_draft.exists():
+            raise FileNotFoundError(f"Thiếu file: {main_draft}")
+
+        draft = json.loads(main_draft.read_text(encoding="utf-8"))
+        media_count, voice_count = self._fill_project_draft_with_inputs(draft, media_dir, voice_dir)
+        main_draft.write_text(json.dumps(draft, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        timelines_dir = project_dir / "Timelines"
+        if timelines_dir.exists() and timelines_dir.is_dir():
+            for child in timelines_dir.iterdir():
+                p = child / "draft_content.json"
+                if not child.is_dir() or not p.exists():
+                    continue
+                d = json.loads(p.read_text(encoding="utf-8"))
+                self._fill_project_draft_with_inputs(d, media_dir, voice_dir)
+                p.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        meta_path = project_dir / "draft_meta_info.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                total_us = int(max(sum(int(x.get("duration") or 0) for x in draft.get("materials", {}).get("videos", [])), sum(int(x.get("duration") or 0) for x in draft.get("materials", {}).get("audios", []))))
+                for k in ["tm_duration", "duration", "max_duration"]:
+                    if isinstance(meta.get(k), (int, float)):
+                        meta[k] = total_us
+                meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+
+        return media_count, voice_count
+
     def _refresh_template_info_label(self) -> None:
         if TEMPLATE_SOURCE_META.exists():
             try:
@@ -641,8 +818,11 @@ class CapCutGui:
                     self._replace_folder_with_files(images_dir, m_dir)
                     self._replace_folder_with_files(voices_dir, v_dir)
 
+                    media_count, voice_count = self._hydrate_project_drafts_with_inputs(new_project, m_dir, v_dir)
+
                     print(f"images={images_dir}")
                     print(f"voices={voices_dir}")
+                    print(f"project_materials: videos={media_count} audios={voice_count}")
                     print(f"created_project={new_project}")
         except Exception:
             output_buf.write(traceback.format_exc())
