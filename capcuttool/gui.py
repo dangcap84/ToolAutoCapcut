@@ -56,7 +56,7 @@ SUBTEXT = "#94a3b8"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v2.7")
+        self.root.title("CapCut Sync v2.8")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -290,13 +290,18 @@ class CapCutGui:
             style="Subtle.TLabel",
         ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
+        right_panel = ttk.Frame(main_frame, style="Panel.TFrame")
+        right_panel.grid(row=1, column=1, sticky=NSEW)
+        right_panel.columnconfigure(0, weight=1)
+        right_panel.rowconfigure(0, weight=1)
+
         projects_card = ttk.Labelframe(
-            left_panel,
+            right_panel,
             text="Danh sách dự án",
             padding=12,
             style="ProjectCard.TLabelframe",
         )
-        projects_card.grid(row=2, column=0, sticky=NSEW, pady=(14, 0))
+        projects_card.grid(row=0, column=0, sticky=NSEW)
         projects_card.columnconfigure(0, weight=1)
         projects_card.rowconfigure(1, weight=1)
 
@@ -329,42 +334,6 @@ class CapCutGui:
             anchor="nw",
         )
 
-        right_panel = ttk.Frame(main_frame, style="Panel.TFrame")
-        right_panel.grid(row=1, column=1, sticky=NSEW)
-        right_panel.columnconfigure(0, weight=1)
-        right_panel.rowconfigure(0, weight=1)
-
-        log_card = ttk.Labelframe(
-            right_panel,
-            text="Nhật ký chạy",
-            padding=12,
-            style="ProjectCard.TLabelframe",
-        )
-        log_card.grid(row=0, column=0, sticky=NSEW)
-        log_card.columnconfigure(0, weight=1)
-        log_card.rowconfigure(1, weight=1)
-
-        ttk.Label(
-            log_card,
-            text="Hiển thị log đồng bộ và lỗi (nếu có).",
-            style="Subtle.TLabel",
-        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
-
-        self.log_text = ScrolledText(
-            log_card,
-            height=18,
-            wrap="none",
-            font=("Consolas", 10),
-        )
-        self.log_text.grid(row=1, column=0, sticky=NSEW)
-        self.log_text.configure(
-            state="disabled",
-            background="#0b1220",
-            foreground=TEXT,
-            padx=10,
-            pady=10,
-        )
-
         status_card = ttk.Frame(main_frame, padding=(0, 12, 0, 0), style="Header.TFrame")
         status_card.grid(row=2, column=0, columnspan=2, sticky=EW, pady=(12, 0))
         status_card.columnconfigure(1, weight=1)
@@ -382,6 +351,38 @@ class CapCutGui:
         self.progress_bar = ttk.Progressbar(status_card, mode="indeterminate", style="Accent.Horizontal.TProgressbar")
         self.progress_bar.grid(row=0, column=2, sticky="ew")
         status_card.columnconfigure(2, weight=1)
+
+        log_card = ttk.Labelframe(
+            main_frame,
+            text="Nhật ký chạy",
+            padding=12,
+            style="ProjectCard.TLabelframe",
+        )
+        log_card.grid(row=3, column=0, columnspan=2, sticky=NSEW, pady=(10, 0))
+        log_card.columnconfigure(0, weight=1)
+        log_card.rowconfigure(1, weight=1)
+        main_frame.rowconfigure(3, weight=0)
+
+        ttk.Label(
+            log_card,
+            text="Hiển thị log đồng bộ và lỗi (nếu có).",
+            style="Subtle.TLabel",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        self.log_text = ScrolledText(
+            log_card,
+            height=8,
+            wrap="none",
+            font=("Consolas", 10),
+        )
+        self.log_text.grid(row=1, column=0, sticky=NSEW)
+        self.log_text.configure(
+            state="disabled",
+            background="#0b1220",
+            foreground=TEXT,
+            padx=10,
+            pady=10,
+        )
 
     def _wire_events(self) -> None:
         if self.projects_canvas is not None:
