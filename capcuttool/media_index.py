@@ -40,30 +40,15 @@ def build_scene_pairs(images_dir: Path, voices_dir: Path) -> List[SceneMedia]:
         raise ValueError(f"No image/video files found in: {images_dir}")
     if not voices:
         raise ValueError(f"No voice files found in: {voices_dir}")
-    if len(images) != len(voices):
-        raise ValueError(
-            f"Image/voice count mismatch: images={len(images)}, voices={len(voices)}. "
-            "Refusing to auto-guess."
-        )
+
+    target_count = len(voices)
+    if len(images) > target_count:
+        images = images[:target_count]
+    elif len(images) < target_count:
+        images = images + [images[-1]] * (target_count - len(images))
 
     scenes: List[SceneMedia] = []
-    for img, voc in zip(images, voices):
-        i_img = _extract_index(img.stem)
-        i_voc = _extract_index(voc.stem)
-
-        has_img_index = i_img != -1
-        has_voc_index = i_voc != -1
-        if has_img_index != has_voc_index:
-            raise ValueError(
-                "Inconsistent scene naming: one file has numeric index while the paired file does not. "
-                f"image={img.name} voice={voc.name}."
-            )
-
-        if has_img_index and has_voc_index and i_img != i_voc:
-            raise ValueError(
-                f"Scene index mismatch: {img.name} (#{i_img}) vs {voc.name} (#{i_voc})."
-            )
-
-        idx = i_img if has_img_index else len(scenes) + 1
-        scenes.append(SceneMedia(index=idx, image_path=img, voice_path=voc))
+    for pos, voc in enumerate(voices, start=1):
+        img = images[pos - 1]
+        scenes.append(SceneMedia(index=pos, image_path=img, voice_path=voc))
     return scenes
