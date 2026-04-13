@@ -25,6 +25,14 @@ from cli import run_sync
 from duration_probe import probe_audio_duration_seconds
 from media_index import AUDIO_EXTS, MEDIA_EXTS, VIDEO_EXTS
 from timeline_sync import sec_to_us
+from project_loader import load_project
+from project_writer import write_json_atomic
+from transition_tools import (
+    apply_random_transitions_to_draft,
+    load_transition_catalog,
+    seed_effect_cache_from_pack,
+    seed_effect_cache_from_zip,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CAPCUT_PROJECT_ROOT = Path(
@@ -51,12 +59,13 @@ PANEL = "#121a2b"
 PANEL_2 = "#172036"
 TEXT = "#e5eefc"
 SUBTEXT = "#94a3b8"
+TRANSITION_CATALOG_LIMIT = 50
 
 
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v2.9")
+        self.root.title("CapCut Sync v3.8.16")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -83,6 +92,18 @@ class CapCutGui:
         )
         self.style.map(
             "Project.TCheckbutton",
+            background=[("active", PANEL_2)],
+            foreground=[("disabled", SUBTEXT)],
+        )
+        self.style.configure(
+            "Transition.TCheckbutton",
+            font=("Segoe UI", 9),
+            foreground=TEXT,
+            background=PANEL_2,
+            padding=(0, 0),
+        )
+        self.style.map(
+            "Transition.TCheckbutton",
             background=[("active", PANEL_2)],
             foreground=[("disabled", SUBTEXT)],
         )
@@ -166,16 +187,25 @@ class CapCutGui:
         self.template_info_var = tk.StringVar(value="Template cache: chưa lưu")
         self.status_var = tk.StringVar(value="Sẵn sàng · Bấm Làm mới, chọn dự án rồi Đồng bộ")
 
+        self.transition_enable_var = tk.BooleanVar(value=False)
+        self.transition_effects_var = tk.StringVar(value="")
+        self.transition_catalog: list[dict] = []
+        self.transition_check_vars: list[tk.BooleanVar] = []
+        self.transition_checks_container: ttk.Frame | None = None
+        self.transition_checks_canvas: tk.Canvas | None = None
+        self.transition_checks_scroll: tk.Scrollbar | None = None
+
         self.project_items: list[tuple[str, str, tk.BooleanVar, ttk.Checkbutton]] = []
         self.project_stats_var = tk.StringVar(value="Đã chọn 0/0 dự án")
 
         self.projects_canvas: tk.Canvas | None = None
         self.projects_container: ttk.Frame | None = None
         self.projects_canvas_window: int | None = None
-        self.projects_scroll: ttk.Scrollbar | None = None
+        self.projects_scroll: tk.Scrollbar | None = None
         self.refresh_button: ttk.Button | None = None
         self.sync_button: ttk.Button | None = None
         self.batch_button: ttk.Button | None = None
+        self.apply_transition_button: ttk.Button | None = None
         self.progress_bar: ttk.Progressbar | None = None
         self.status_badge: ttk.Label | None = None
         self.status_label: ttk.Label | None = None
@@ -186,6 +216,10 @@ class CapCutGui:
 
         self.root.after(100, self._flush_log)
         self.refresh_projects()
+        seeded = seed_effect_cache_from_pack()
+        if seeded > 0:
+            self._append_log(f"[TRANSITION] seeded_effect_cache_from_pack={seeded}\n")
+        self._load_transition_catalog_to_input(show_message=False)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_layout(self) -> None:
@@ -224,11 +258,15 @@ class CapCutGui:
 
         sync_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
         create_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
+        transition_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
         sync_tab.columnconfigure(0, weight=1)
         create_tab.columnconfigure(0, weight=1)
+        transition_tab.columnconfigure(0, weight=1)
+        transition_tab.rowconfigure(0, weight=1)
 
         nav_tabs.add(create_tab, text="Tạo dự án")
         nav_tabs.add(sync_tab, text="Đồng bộ")
+        nav_tabs.add(transition_tab, text="Chuyển cảnh")
 
         action_card = ttk.Labelframe(
             sync_tab,
@@ -244,18 +282,9 @@ class CapCutGui:
         )
         ttk.Label(
             action_card,
-            text="Làm mới danh sách dự án rồi bấm Đồng bộ cho dự án đã chọn.",
+            text="Chọn dự án ở panel bên phải rồi bấm Đồng bộ.",
             style="Subtle.TLabel",
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 12))
-
-        self.refresh_button = ttk.Button(
-            action_card,
-            text="Làm mới",
-            command=self.refresh_projects,
-            width=12,
-            style="Secondary.TButton",
-        )
-        self.refresh_button.grid(row=2, column=0, sticky="w")
 
         self.sync_button = ttk.Button(
             action_card,
@@ -264,7 +293,7 @@ class CapCutGui:
             width=12,
             style="Accent.TButton",
         )
-        self.sync_button.grid(row=2, column=1, sticky="w", padx=(8, 0))
+        self.sync_button.grid(row=2, column=0, sticky="w")
 
         ttk.Label(
             action_card,
@@ -307,6 +336,94 @@ class CapCutGui:
             style="Subtle.TLabel",
         ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
+        transition_card = ttk.Labelframe(
+            transition_tab,
+            text="Thêm hiệu ứng chuyển cảnh",
+            padding=12,
+            style="ProjectCard.TLabelframe",
+        )
+        transition_card.grid(row=0, column=0, sticky=NSEW)
+        transition_card.columnconfigure(0, weight=1)
+        transition_card.columnconfigure(1, weight=1)
+        transition_card.columnconfigure(2, weight=1)
+        transition_card.rowconfigure(3, weight=1)
+
+        ttk.Label(
+            transition_card,
+            text="Chọn dự án ở panel bên phải, chọn effect rồi bấm Thêm hiệu ứng.",
+            style="Subtle.TLabel",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+
+        self.apply_transition_button = ttk.Button(
+            transition_card,
+            text="Thêm hiệu ứng",
+            style="Accent.TButton",
+            command=self._on_apply_transitions_only,
+            width=16,
+        )
+        self.apply_transition_button.grid(row=1, column=0, sticky="w")
+
+        ttk.Label(
+            transition_card,
+            text="Danh sách hiệu ứng (tick để chọn)",
+            style="Subtle.TLabel",
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(10, 4))
+
+        checks_host = ttk.Frame(transition_card, style="Panel.TFrame")
+        checks_host.grid(row=3, column=0, columnspan=3, sticky=NSEW)
+        checks_host.columnconfigure(0, weight=1)
+        checks_host.rowconfigure(0, weight=1)
+        checks_host.configure(height=200)
+        checks_host.grid_propagate(False)
+
+        checks_canvas = tk.Canvas(
+            checks_host,
+            background=PANEL_2,
+            highlightthickness=0,
+            bd=0,
+            height=200,
+        )
+        checks_canvas.grid(row=0, column=0, sticky=NSEW)
+        self.transition_checks_canvas = checks_canvas
+
+        checks_scroll = tk.Scrollbar(
+            checks_host,
+            orient="vertical",
+            command=checks_canvas.yview,
+            width=14,
+            relief="raised",
+        )
+        checks_scroll.grid(row=0, column=1, sticky="ns")
+        self.transition_checks_scroll = checks_scroll
+
+        checks_canvas.configure(yscrollcommand=checks_scroll.set)
+
+        self.transition_checks_container = ttk.Frame(checks_canvas, style="Panel.TFrame")
+        checks_window = checks_canvas.create_window((0, 0), window=self.transition_checks_container, anchor="nw")
+
+        def _sync_checks_scroll(_event=None) -> None:
+            checks_canvas.configure(scrollregion=checks_canvas.bbox("all"))
+
+        def _sync_checks_width(_event=None) -> None:
+            checks_canvas.itemconfigure(checks_window, width=checks_canvas.winfo_width())
+
+        def _on_mousewheel(event) -> str:
+            if event.delta == 0:
+                return "break"
+            delta = int(-1 * (event.delta / 120))
+            if delta == 0:
+                delta = -1 if event.delta > 0 else 1
+            checks_canvas.yview_scroll(delta, "units")
+            return "break"
+
+        self.transition_checks_container.bind("<Configure>", _sync_checks_scroll)
+        checks_canvas.bind("<Configure>", _sync_checks_width)
+        checks_canvas.bind("<Enter>", lambda _e: checks_canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        checks_canvas.bind("<Leave>", lambda _e: checks_canvas.unbind_all("<MouseWheel>"))
+
+        # Init at top.
+        checks_canvas.yview_moveto(0.0)
+
         right_panel = ttk.Frame(main_frame, style="Panel.TFrame")
         right_panel.grid(row=1, column=1, sticky=NSEW)
         right_panel.columnconfigure(0, weight=1)
@@ -322,11 +439,24 @@ class CapCutGui:
         projects_card.columnconfigure(0, weight=1)
         projects_card.rowconfigure(1, weight=1)
 
+        projects_header = ttk.Frame(projects_card, style="Panel.TFrame")
+        projects_header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        projects_header.columnconfigure(0, weight=1)
+
         ttk.Label(
-            projects_card,
+            projects_header,
             textvariable=self.project_stats_var,
             style="Subtle.TLabel",
-        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+        ).grid(row=0, column=0, sticky="w")
+
+        self.refresh_button = ttk.Button(
+            projects_header,
+            text="Làm mới dự án",
+            command=self.refresh_projects,
+            width=14,
+            style="Secondary.TButton",
+        )
+        self.refresh_button.grid(row=0, column=1, sticky="e")
 
         list_host = ttk.Frame(projects_card, style="Panel.TFrame")
         list_host.grid(row=1, column=0, sticky=NSEW)
@@ -340,7 +470,13 @@ class CapCutGui:
             bd=0,
         )
         self.projects_canvas.grid(row=0, column=0, sticky=NSEW)
-        self.projects_scroll = ttk.Scrollbar(list_host, orient="vertical", command=self.projects_canvas.yview)
+        self.projects_scroll = tk.Scrollbar(
+            list_host,
+            orient="vertical",
+            command=self.projects_canvas.yview,
+            width=14,
+            relief="raised",
+        )
         self.projects_scroll.grid(row=0, column=1, sticky="ns")
         self.projects_canvas.configure(yscrollcommand=self.projects_scroll.set)
 
@@ -404,7 +540,8 @@ class CapCutGui:
     def _wire_events(self) -> None:
         if self.projects_canvas is not None:
             self.projects_canvas.bind("<Configure>", self._on_projects_canvas_configure)
-            self.projects_canvas.bind_all("<MouseWheel>", self._on_projects_mousewheel)
+            self.projects_canvas.bind("<Enter>", lambda _e: self.projects_canvas.bind_all("<MouseWheel>", self._on_projects_mousewheel))
+            self.projects_canvas.bind("<Leave>", lambda _e: self.projects_canvas.unbind_all("<MouseWheel>"))
         if self.projects_container is not None:
             self.projects_container.bind("<Configure>", self._on_projects_container_configure)
 
@@ -421,7 +558,11 @@ class CapCutGui:
     def _on_projects_mousewheel(self, event) -> str:
         if self.projects_canvas is None:
             return "break"
-        delta = -1 if event.delta > 0 else 1
+        if event.delta == 0:
+            return "break"
+        delta = int(-1 * (event.delta / 120))
+        if delta == 0:
+            delta = -1 if event.delta > 0 else 1
         self.projects_canvas.yview_scroll(delta, "units")
         return "break"
 
@@ -811,13 +952,31 @@ class CapCutGui:
         self._set_running_state(True)
         self.current_task_running = True
 
+        transition_enabled = self.transition_enable_var.get()
+        transition_effects = self.transition_effects_var.get().strip()
+
         threading.Thread(
             target=self._execute_batch_create,
-            args=(template_project, voices_root, media_root, project_name),
+            args=(
+                template_project,
+                voices_root,
+                media_root,
+                project_name,
+                transition_enabled,
+                transition_effects,
+            ),
             daemon=True,
         ).start()
 
-    def _execute_batch_create(self, template_project: Path, voices_root: Path, media_root: Path, project_name: str) -> None:
+    def _execute_batch_create(
+        self,
+        template_project: Path,
+        voices_root: Path,
+        media_root: Path,
+        project_name: str,
+        transition_enabled: bool,
+        transition_effects: str,
+    ) -> None:
         output_buf = io.StringIO()
         overall_code = 0
         try:
@@ -838,9 +997,20 @@ class CapCutGui:
 
                     media_count, voice_count = self._hydrate_project_drafts_with_inputs(new_project, m_dir, v_dir)
 
+                    transition_mode = "random" if transition_enabled else "none"
+                    run_sync(
+                        new_project,
+                        Path(m_dir),
+                        Path(v_dir),
+                        backup=False,
+                        transition_mode=transition_mode,
+                        transition_effects=transition_effects,
+                    )
+
                     print(f"images={images_dir}")
                     print(f"voices={voices_dir}")
                     print(f"project_materials: videos={media_count} audios={voice_count}")
+                    print(f"transitions={transition_mode}")
                     print(f"created_project={new_project}")
         except Exception:
             output_buf.write(traceback.format_exc())
@@ -899,6 +1069,240 @@ class CapCutGui:
 
         return resolved_images, resolved_voices
 
+    def _load_transition_catalog_to_input(self, show_message: bool = True) -> None:
+        selected_projects = self._collect_selected_projects()
+        sample_draft = None
+        if selected_projects:
+            try:
+                p = Path(selected_projects[0]) / "draft_content.json"
+                if p.exists():
+                    sample_draft = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                sample_draft = None
+
+        catalog = load_transition_catalog(sample_project_draft=sample_draft)
+        if not catalog:
+            if show_message:
+                messagebox.showwarning("Transition catalog", "Không tìm thấy effect transition trong project thư viện.")
+            return
+
+        def _is_vietnamese_friendly_name(name: str) -> bool:
+            n = (name or "").strip()
+            if not n:
+                return False
+
+            low = n.lower()
+            if low.isdigit():
+                return False
+            if re.fullmatch(r"\d{12,}", low):
+                return False
+            if re.fullmatch(r"[a-z0-9_\-]{18,}", low):
+                return False
+            if "editor_" in low or "_config" in low or "tag_" in low:
+                return False
+            if low.startswith("amazing"):
+                return False
+
+            # Accept human-readable names (Vietnamese with/without dấu), reject technical tokens.
+            if len(n) < 2:
+                return False
+            if not re.search(r"[A-Za-zÀ-ỹĐđ]", n):
+                return False
+            return True
+
+        curated: list[dict] = []
+        for item in catalog:
+            effect_id = str(item.get("effect_id") or "").strip()
+            name = str(item.get("name") or "").strip()
+            if not effect_id or not _is_vietnamese_friendly_name(name) or name == effect_id:
+                continue
+            curated.append(item)
+
+        seen_ids: set[str] = set()
+        filtered_catalog: list[dict] = []
+        for item in curated:
+            eid = str(item.get("effect_id") or "").strip()
+            if not eid or eid in seen_ids:
+                continue
+            seen_ids.add(eid)
+            filtered_catalog.append(item)
+            if len(filtered_catalog) >= TRANSITION_CATALOG_LIMIT:
+                break
+
+        if not filtered_catalog:
+            if show_message:
+                messagebox.showwarning(
+                    "Transition catalog",
+                    "Không tìm thấy effect transition có tên tiếng Việt trong project thư viện.",
+                )
+            return
+
+        self.transition_catalog = filtered_catalog
+        self.transition_effects_var.set("")
+
+        if self.transition_checks_container is not None:
+            for child in self.transition_checks_container.winfo_children():
+                child.destroy()
+        if self.transition_checks_canvas is not None:
+            self.transition_checks_canvas.yview_moveto(0.0)
+
+        self.transition_check_vars = []
+        effect_ids = []
+
+        for idx, item in enumerate(filtered_catalog):
+            effect_id = str(item.get("effect_id") or "").strip()
+            if not effect_id:
+                continue
+            effect_ids.append(effect_id)
+
+            name = str(item.get("name") or effect_id)
+            cat = str(item.get("category_name") or "")
+            if (not cat) or name == effect_id:
+                if effect_id == "6864867302936941064":
+                    name = "Chớp mắt"
+                    cat = cat or "Đang thịnh hành"
+                elif effect_id == "7606637909403290887":
+                    name = "Cảnh mở ra"
+                    cat = cat or "Đang thịnh hành"
+
+            label = name if not cat else f"{name} ({cat})"
+            if self.transition_checks_container is not None:
+                v = tk.BooleanVar(value=False)
+                cb = ttk.Checkbutton(
+                    self.transition_checks_container,
+                    text=label,
+                    variable=v,
+                    style="Transition.TCheckbutton",
+                )
+                idx_cb = len(self.transition_check_vars)
+                row = idx_cb // 2
+                col = idx_cb % 2
+                cb.grid(row=row, column=col, sticky="w", padx=(0, 18), pady=(0, 0))
+                self.transition_check_vars.append(v)
+
+        def _refresh_transition_scrollbar() -> None:
+            if self.transition_checks_canvas is None or self.transition_checks_container is None:
+                return
+            self.transition_checks_container.columnconfigure(0, weight=1)
+            self.transition_checks_container.columnconfigure(1, weight=1)
+            bbox = self.transition_checks_canvas.bbox("all")
+            if bbox is None:
+                self.transition_checks_canvas.configure(scrollregion=(0, 0, 0, 0))
+                return
+            self.transition_checks_canvas.configure(scrollregion=bbox)
+
+        self.root.after_idle(_refresh_transition_scrollbar)
+        self._append_log(f"[TRANSITION] catalog_loaded={len(effect_ids)} (limit={TRANSITION_CATALOG_LIMIT}, vietnamese_name_only_strict)\n")
+        self._set_status(f"Đã tự nạp {len(effect_ids)} transition effects tiếng Việt (tối đa {TRANSITION_CATALOG_LIMIT})", "success")
+
+    def _get_selected_transition_effect_ids(self) -> list[str]:
+        out: list[str] = []
+        for idx, item in enumerate(self.transition_catalog):
+            if idx >= len(self.transition_check_vars):
+                continue
+            if not self.transition_check_vars[idx].get():
+                continue
+            effect_id = str(item.get("effect_id") or "").strip()
+            if effect_id:
+                out.append(effect_id)
+        return out
+
+    def _on_load_transition_pack_zip(self) -> None:
+        zip_path = filedialog.askopenfilename(
+            title="Chọn Transition Pack ZIP",
+            filetypes=[("ZIP files", "*.zip"), ("All files", "*.*")],
+        )
+        if not zip_path:
+            return
+
+        try:
+            copied = seed_effect_cache_from_zip(Path(zip_path))
+            self._append_log(f"[TRANSITION] loaded_zip={zip_path} copied_effects={copied}\n")
+            if copied <= 0:
+                messagebox.showwarning(
+                    "Transition Pack",
+                    "Không import được effect nào từ file ZIP (có thể đã tồn tại hoặc sai định dạng).",
+                )
+            else:
+                messagebox.showinfo(
+                    "Transition Pack",
+                    f"Đã import {copied} effect từ ZIP vào cache CapCut.",
+                )
+            self._load_transition_catalog_to_input(show_message=False)
+        except Exception as exc:
+            messagebox.showerror("Transition Pack", f"Load ZIP thất bại: {exc}")
+
+    def _on_apply_transitions_only(self) -> None:
+        if self.current_process is not None or self.current_task_running:
+            messagebox.showwarning("Đang bận", "Đang có tiến trình chạy. Vui lòng chờ xong.")
+            return
+
+        selected_projects = self._collect_selected_projects()
+        if not selected_projects:
+            messagebox.showerror("Chưa chọn dự án", "Vui lòng chọn ít nhất 1 dự án trong danh sách.")
+            return
+
+        selected_effect_ids = self._get_selected_transition_effect_ids()
+        if not selected_effect_ids:
+            messagebox.showerror("Thiếu hiệu ứng", "Hãy chọn ít nhất 1 hiệu ứng trong danh sách.")
+            return
+
+        self.current_action = "transition_apply"
+        self._append_log("\n--- Apply transitions only ---\n")
+        self._append_log(
+            f"projects={len(selected_projects)} selected_effects={len(selected_effect_ids)}\n"
+        )
+        self._set_status(f"Đang thêm transition cho {len(selected_projects)} dự án...", "info")
+        self._set_running_state(True)
+        self.current_task_running = True
+
+        threading.Thread(
+            target=self._execute_apply_transitions_only,
+            args=(selected_projects, selected_effect_ids),
+            daemon=True,
+        ).start()
+
+    def _execute_apply_transitions_only(
+        self,
+        projects: list[str],
+        selected_effect_ids: list[str],
+    ) -> None:
+        output_buf = io.StringIO()
+        overall_code = 0
+        try:
+            with contextlib.redirect_stdout(output_buf):
+                for idx, project in enumerate(projects, start=1):
+                    project_dir = Path(project)
+                    print(f"--- transition project {idx}/{len(projects)}: {project_dir} ---")
+
+                    bundle = load_project(project_dir)
+                    catalog = load_transition_catalog(sample_project_draft=bundle.main_draft)
+                    added_main = apply_random_transitions_to_draft(
+                        bundle.main_draft,
+                        catalog,
+                        selected_effect_ids=selected_effect_ids,
+                    )
+                    write_json_atomic(bundle.main_draft_path, bundle.main_draft)
+                    print(f"main_transitions_added={added_main}")
+
+                    for tp in bundle.timeline_draft_paths:
+                        d = bundle.timelines[tp]
+                        added_tl = apply_random_transitions_to_draft(
+                            d,
+                            catalog,
+                            selected_effect_ids=selected_effect_ids,
+                        )
+                        write_json_atomic(tp, d)
+                        print(f"timeline={tp} transitions_added={added_tl}")
+        except Exception:
+            output_buf.write(traceback.format_exc())
+            overall_code = 1
+
+        out = output_buf.getvalue()
+        if out:
+            self.log_queue.put(out)
+        self.log_queue.put(f"PROCESS_EXIT:{overall_code}")
+
     def _on_sync_audio(self) -> None:
         self.mode_var.set("sync")
         self._start_run()
@@ -936,7 +1340,15 @@ class CapCutGui:
             self.current_task_running = True
             threading.Thread(
                 target=self._execute_embedded_batch,
-                args=(selected_projects, images, voices, mode, self.backup_var.get()),
+                args=(
+                    selected_projects,
+                    images,
+                    voices,
+                    mode,
+                    self.backup_var.get(),
+                    self.transition_enable_var.get(),
+                    self.transition_effects_var.get().strip(),
+                ),
                 daemon=True,
             ).start()
             return
@@ -955,6 +1367,11 @@ class CapCutGui:
         cmd.extend(["--mode", mode])
         if self.backup_var.get():
             cmd.append("--backup")
+
+        if self.transition_enable_var.get():
+            cmd.extend(["--transition-mode", "random"])
+            if self.transition_effects_var.get().strip():
+                cmd.extend(["--transition-effects", self.transition_effects_var.get().strip()])
         self._append_log("$ " + " ".join(cmd) + "\n")
         threading.Thread(target=self._execute_command, args=(cmd,), daemon=True).start()
 
@@ -1025,7 +1442,14 @@ class CapCutGui:
         self._set_status(f"Đã làm mới danh sách · sẵn sàng {len(filtered)} dự án", "info")
 
     def _execute_embedded_batch(
-        self, projects: list[str], images: str, voices: str, mode: str, backup: bool
+        self,
+        projects: list[str],
+        images: str,
+        voices: str,
+        mode: str,
+        backup: bool,
+        transition_enabled: bool,
+        transition_effects: str,
     ) -> None:
         output_buf = io.StringIO()
         overall_code = 0
@@ -1046,6 +1470,8 @@ class CapCutGui:
                         Path(resolved_images) if resolved_images else None,
                         Path(resolved_voices) if resolved_voices else None,
                         backup,
+                        transition_mode="random" if transition_enabled else "none",
+                        transition_effects=transition_effects,
                     )
                     if code != 0:
                         overall_code = code
@@ -1101,26 +1527,33 @@ class CapCutGui:
         self._set_running_state(False)
 
         is_batch = self.current_action == "batch_create"
-        success_title = "Tạo batch xong" if is_batch else "Đồng bộ xong"
-        success_message = (
-            "Đã tạo project hàng loạt thành công."
-            if is_batch
-            else "Đã đồng bộ các dự án đã chọn thành công."
-        )
-        error_title = "Tạo batch lỗi" if is_batch else "Đồng bộ lỗi"
+        is_transition_apply = self.current_action == "transition_apply"
+
+        if is_batch:
+            success_title = "Tạo batch xong"
+            success_message = "Đã tạo project hàng loạt thành công."
+            error_title = "Tạo batch lỗi"
+            ok_status = "Tạo batch thành công"
+            err_status = f"Tạo batch lỗi (mã {return_code})"
+        elif is_transition_apply:
+            success_title = "Thêm transition xong"
+            success_message = "Đã thêm transition cho các dự án đã chọn."
+            error_title = "Thêm transition lỗi"
+            ok_status = "Thêm transition thành công"
+            err_status = f"Thêm transition lỗi (mã {return_code})"
+        else:
+            success_title = "Đồng bộ xong"
+            success_message = "Đã đồng bộ các dự án đã chọn thành công."
+            error_title = "Đồng bộ lỗi"
+            ok_status = "Đồng bộ thành công"
+            err_status = f"Đồng bộ lỗi (mã {return_code})"
 
         if return_code == 0:
-            self._set_status(
-                "Tạo batch thành công" if is_batch else "Đồng bộ thành công",
-                "success",
-            )
+            self._set_status(ok_status, "success")
             self._show_toast(success_title, success_message, "success")
             messagebox.showinfo(success_title, success_message)
         else:
-            self._set_status(
-                f"Tạo batch lỗi (mã {return_code})" if is_batch else f"Đồng bộ lỗi (mã {return_code})",
-                "error",
-            )
+            self._set_status(err_status, "error")
             self._show_toast(error_title, f"Tiến trình lỗi với mã {return_code}.", "danger")
             messagebox.showerror(error_title, f"Tiến trình lỗi với mã {return_code}. Xem nhật ký chạy để biết chi tiết.")
 
@@ -1141,6 +1574,8 @@ class CapCutGui:
             self.refresh_button.configure(state=new_state)
         if self.batch_button is not None:
             self.batch_button.configure(state=new_state)
+        if self.apply_transition_button is not None:
+            self.apply_transition_button.configure(state=new_state)
 
     def _set_status(self, message: str, status_type: str = "info") -> None:
         self.status_var.set(message)
