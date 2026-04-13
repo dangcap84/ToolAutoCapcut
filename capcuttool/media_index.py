@@ -41,14 +41,13 @@ def build_scene_pairs(images_dir: Path, voices_dir: Path) -> List[SceneMedia]:
     if not voices:
         raise ValueError(f"No voice files found in: {voices_dir}")
 
-    target_count = len(voices)
-    if len(images) > target_count:
-        images = images[:target_count]
-    elif len(images) < target_count:
-        images = images + [images[-1]] * (target_count - len(images))
-
+    # Không ép số lượng file media phải bằng voice.
+    # Mapping chỉ phục vụ pipeline đồng bộ (timeline sẽ normalize theo voice duration).
+    # - media nhiều hơn voice: dùng phần đầu theo thứ tự, file dư vẫn giữ nguyên trong project folder
+    # - media ít hơn voice: lặp media cuối để luôn có mapping 1-1 theo thứ tự
     scenes: List[SceneMedia] = []
+    last_img = images[-1]
     for pos, voc in enumerate(voices, start=1):
-        img = images[pos - 1]
+        img = images[pos - 1] if pos <= len(images) else last_img
         scenes.append(SceneMedia(index=pos, image_path=img, voice_path=voc))
     return scenes
