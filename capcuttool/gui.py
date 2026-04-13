@@ -33,6 +33,7 @@ from transition_tools import (
     seed_effect_cache_from_pack,
     seed_effect_cache_from_zip,
 )
+from keyframe_tools import apply_zoom_keyframes_to_draft
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CAPCUT_PROJECT_ROOT = Path(
@@ -60,12 +61,13 @@ PANEL_2 = "#172036"
 TEXT = "#e5eefc"
 SUBTEXT = "#94a3b8"
 TRANSITION_CATALOG_LIMIT = 50
+BULK_ACTION_WARNING_THRESHOLD = 5
 
 
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.8.16")
+        self.root.title("CapCut Sync v3.9.5")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -77,7 +79,7 @@ class CapCutGui:
             self.style.theme_use("clam")
         except tk.TclError:
             pass
-        self.style.configure("AppTitle.TLabel", font=("Segoe UI Semibold", 18), foreground=TEXT, background=BG)
+        self.style.configure("AppTitle.TLabel", font=("Segoe UI Semibold", 19), foreground=TEXT, background=BG)
         self.style.configure("SectionTitle.TLabel", font=("Segoe UI Semibold", 11), foreground=TEXT, background=PANEL)
         self.style.configure("Subtle.TLabel", font=("Segoe UI", 9), foreground=SUBTEXT, background=PANEL)
         self.style.configure("ProjectCard.TLabelframe", padding=10, background=PANEL, foreground=TEXT)
@@ -112,7 +114,7 @@ class CapCutGui:
             font=("Segoe UI Semibold", 10),
             foreground=TEXT,
             background=ACCENT,
-            padding=(12, 6),
+            padding=(14, 8),
         )
         self.style.map(
             "Accent.TButton",
@@ -124,7 +126,7 @@ class CapCutGui:
             font=("Segoe UI Semibold", 10),
             foreground=TEXT,
             background=PANEL_2,
-            padding=(12, 6),
+            padding=(12, 8),
         )
         self.style.configure(
             "Ghost.TButton",
@@ -195,6 +197,13 @@ class CapCutGui:
         self.transition_checks_canvas: tk.Canvas | None = None
         self.transition_checks_scroll: tk.Scrollbar | None = None
 
+        self.keyframe_mode_var = tk.StringVar(value="zoom_in")
+        self.keyframe_only_picture_var = tk.BooleanVar(value=False)
+        self.keyframe_start_percent_var = tk.StringVar(value="100")
+        self.keyframe_end_percent_var = tk.StringVar(value="112")
+        self.keyframe_full_duration_var = tk.BooleanVar(value=True)
+        self.keyframe_duration_seconds_var = tk.StringVar(value="3.0")
+
         self.project_items: list[tuple[str, str, tk.BooleanVar, ttk.Checkbutton]] = []
         self.project_stats_var = tk.StringVar(value="Đã chọn 0/0 dự án")
 
@@ -206,12 +215,15 @@ class CapCutGui:
         self.sync_button: ttk.Button | None = None
         self.batch_button: ttk.Button | None = None
         self.apply_transition_button: ttk.Button | None = None
+        self.apply_keyframe_button: ttk.Button | None = None
         self.progress_bar: ttk.Progressbar | None = None
         self.status_badge: ttk.Label | None = None
         self.status_label: ttk.Label | None = None
 
         self._build_layout()
         self._wire_events()
+        self.keyframe_mode_var.trace_add("write", lambda *_: self._on_keyframe_mode_changed())
+        self._on_keyframe_mode_changed()
         self._refresh_template_info_label()
 
         self.root.after(100, self._flush_log)
@@ -238,7 +250,7 @@ class CapCutGui:
         )
         ttk.Label(
             header,
-            text="Làm mới danh sách → chọn dự án → Đồng bộ",
+            text="Chọn dự án ở bên phải, sau đó chạy thao tác ở các tab chức năng.",
             style="Subtle.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(4, 0))
 
@@ -259,14 +271,18 @@ class CapCutGui:
         sync_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
         create_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
         transition_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
+        keyframe_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
         sync_tab.columnconfigure(0, weight=1)
         create_tab.columnconfigure(0, weight=1)
         transition_tab.columnconfigure(0, weight=1)
         transition_tab.rowconfigure(0, weight=1)
+        keyframe_tab.columnconfigure(0, weight=1)
+        keyframe_tab.rowconfigure(0, weight=1)
 
         nav_tabs.add(create_tab, text="Tạo dự án")
         nav_tabs.add(sync_tab, text="Đồng bộ")
         nav_tabs.add(transition_tab, text="Chuyển cảnh")
+        nav_tabs.add(keyframe_tab, text="Keyframe")
 
         action_card = ttk.Labelframe(
             sync_tab,
@@ -282,7 +298,7 @@ class CapCutGui:
         )
         ttk.Label(
             action_card,
-            text="Chọn dự án ở panel bên phải rồi bấm Đồng bộ.",
+            text="Chọn dự án ở panel bên phải rồi bấm Đồng bộ timeline.",
             style="Subtle.TLabel",
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 12))
 
@@ -350,22 +366,22 @@ class CapCutGui:
 
         ttk.Label(
             transition_card,
-            text="Chọn dự án ở panel bên phải, chọn effect rồi bấm Thêm hiệu ứng.",
+            text="Chọn dự án ở panel bên phải, chọn hiệu ứng rồi bấm Áp dụng chuyển cảnh.",
             style="Subtle.TLabel",
         ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
 
         self.apply_transition_button = ttk.Button(
             transition_card,
-            text="Thêm hiệu ứng",
+            text="Áp dụng",
             style="Accent.TButton",
             command=self._on_apply_transitions_only,
-            width=16,
+            width=12,
         )
         self.apply_transition_button.grid(row=1, column=0, sticky="w")
 
         ttk.Label(
             transition_card,
-            text="Danh sách hiệu ứng (tick để chọn)",
+            text="Danh sách hiệu ứng (chọn một hoặc nhiều)",
             style="Subtle.TLabel",
         ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(10, 4))
 
@@ -424,6 +440,61 @@ class CapCutGui:
         # Init at top.
         checks_canvas.yview_moveto(0.0)
 
+        keyframe_card = ttk.Labelframe(
+            keyframe_tab,
+            text="Keyframe Zoom",
+            padding=10,
+            style="ProjectCard.TLabelframe",
+        )
+        keyframe_card.grid(row=0, column=0, sticky=NSEW)
+        keyframe_card.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            keyframe_card,
+            text="Thiết lập nhanh rồi bấm Áp dụng.",
+            style="Subtle.TLabel",
+            wraplength=360,
+            justify="left",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+
+        ttk.Label(keyframe_card, text="Kiểu chuyển động:", style="Subtle.TLabel").grid(row=1, column=0, sticky="w")
+        zoom_row = ttk.Frame(keyframe_card, style="Panel.TFrame")
+        zoom_row.grid(row=1, column=1, columnspan=2, sticky="w")
+        ttk.Radiobutton(zoom_row, text="Zoom in", value="zoom_in", variable=self.keyframe_mode_var).grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(zoom_row, text="Zoom out", value="zoom_out", variable=self.keyframe_mode_var).grid(row=0, column=1, sticky="w", padx=(14, 0))
+
+        ttk.Checkbutton(
+            keyframe_card,
+            text="Only picture",
+            variable=self.keyframe_only_picture_var,
+            style="Project.TCheckbutton",
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
+        ttk.Label(keyframe_card, text="Start (%):", style="Subtle.TLabel").grid(row=3, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(keyframe_card, textvariable=self.keyframe_start_percent_var, width=10, style="Search.TEntry").grid(row=3, column=1, sticky="w", pady=(8, 0))
+
+        ttk.Label(keyframe_card, text="End (%):", style="Subtle.TLabel").grid(row=4, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(keyframe_card, textvariable=self.keyframe_end_percent_var, width=10, style="Search.TEntry").grid(row=4, column=1, sticky="w", pady=(6, 0))
+
+        ttk.Checkbutton(
+            keyframe_card,
+            text="Full duration",
+            variable=self.keyframe_full_duration_var,
+            style="Project.TCheckbutton",
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        ttk.Label(keyframe_card, text="Duration (s):", style="Subtle.TLabel").grid(row=6, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(keyframe_card, textvariable=self.keyframe_duration_seconds_var, width=10, style="Search.TEntry").grid(row=6, column=1, sticky="w", pady=(6, 0))
+
+        self.apply_keyframe_button = ttk.Button(
+            keyframe_card,
+            text="Áp dụng",
+            style="Accent.TButton",
+            command=self._on_apply_keyframes_only,
+            width=12,
+        )
+        self.apply_keyframe_button.grid(row=7, column=0, sticky="w", pady=(10, 0))
+
         right_panel = ttk.Frame(main_frame, style="Panel.TFrame")
         right_panel.grid(row=1, column=1, sticky=NSEW)
         right_panel.columnconfigure(0, weight=1)
@@ -431,7 +502,7 @@ class CapCutGui:
 
         projects_card = ttk.Labelframe(
             right_panel,
-            text="Danh sách dự án",
+            text="Dự án CapCut",
             padding=12,
             style="ProjectCard.TLabelframe",
         )
@@ -451,9 +522,9 @@ class CapCutGui:
 
         self.refresh_button = ttk.Button(
             projects_header,
-            text="Làm mới dự án",
+            text="Làm mới",
             command=self.refresh_projects,
-            width=14,
+            width=12,
             style="Secondary.TButton",
         )
         self.refresh_button.grid(row=0, column=1, sticky="e")
@@ -518,7 +589,7 @@ class CapCutGui:
 
         ttk.Label(
             log_card,
-            text="Hiển thị log đồng bộ và lỗi (nếu có).",
+            text="Nhật ký thao tác (đồng bộ / chuyển cảnh / keyframe / lỗi).",
             style="Subtle.TLabel",
         ).grid(row=0, column=0, sticky="w", pady=(0, 8))
 
@@ -580,6 +651,24 @@ class CapCutGui:
             if var.get():
                 out.append(path)
         return sorted(out)
+
+    def _confirm_bulk_action(self, action_name: str, projects: list[str]) -> bool:
+        count = len(projects)
+        if count < BULK_ACTION_WARNING_THRESHOLD:
+            return True
+
+        preview = "\n".join(f"- {Path(p).name}" for p in projects[:8])
+        if count > 8:
+            preview += f"\n... và {count - 8} dự án khác"
+
+        return messagebox.askyesno(
+            "Xác nhận thao tác hàng loạt",
+            (
+                f"Bạn sắp {action_name} cho {count} dự án.\n\n"
+                f"Danh sách:\n{preview}\n\n"
+                "Tiếp tục không?"
+            ),
+        )
 
     def _pick_batch_voices_root(self) -> None:
         path = filedialog.askdirectory(title="Chọn thư mục voice")
@@ -952,9 +1041,6 @@ class CapCutGui:
         self._set_running_state(True)
         self.current_task_running = True
 
-        transition_enabled = self.transition_enable_var.get()
-        transition_effects = self.transition_effects_var.get().strip()
-
         threading.Thread(
             target=self._execute_batch_create,
             args=(
@@ -962,8 +1048,6 @@ class CapCutGui:
                 voices_root,
                 media_root,
                 project_name,
-                transition_enabled,
-                transition_effects,
             ),
             daemon=True,
         ).start()
@@ -974,8 +1058,6 @@ class CapCutGui:
         voices_root: Path,
         media_root: Path,
         project_name: str,
-        transition_enabled: bool,
-        transition_effects: str,
     ) -> None:
         output_buf = io.StringIO()
         overall_code = 0
@@ -997,20 +1079,10 @@ class CapCutGui:
 
                     media_count, voice_count = self._hydrate_project_drafts_with_inputs(new_project, m_dir, v_dir)
 
-                    transition_mode = "random" if transition_enabled else "none"
-                    run_sync(
-                        new_project,
-                        Path(m_dir),
-                        Path(v_dir),
-                        backup=False,
-                        transition_mode=transition_mode,
-                        transition_effects=transition_effects,
-                    )
-
                     print(f"images={images_dir}")
                     print(f"voices={voices_dir}")
                     print(f"project_materials: videos={media_count} audios={voice_count}")
-                    print(f"transitions={transition_mode}")
+                    print("sync_step=skipped (create-only semantics)")
                     print(f"created_project={new_project}")
         except Exception:
             output_buf.write(traceback.format_exc())
@@ -1111,16 +1183,27 @@ class CapCutGui:
             return True
 
         curated: list[dict] = []
+        fallback_readable: list[dict] = []
         for item in catalog:
             effect_id = str(item.get("effect_id") or "").strip()
             name = str(item.get("name") or "").strip()
-            if not effect_id or not _is_vietnamese_friendly_name(name) or name == effect_id:
+            if not effect_id:
                 continue
-            curated.append(item)
+
+            # strict curated path (prefer Vietnamese-friendly names)
+            if _is_vietnamese_friendly_name(name) and name != effect_id:
+                curated.append(item)
+                continue
+
+            # fallback path: still show readable non-empty names, avoid raw id-only entries
+            if name and name != effect_id and not re.fullmatch(r"\d{10,}", name):
+                fallback_readable.append(item)
+
+        source_for_ui = curated if curated else fallback_readable
 
         seen_ids: set[str] = set()
         filtered_catalog: list[dict] = []
-        for item in curated:
+        for item in source_for_ui:
             eid = str(item.get("effect_id") or "").strip()
             if not eid or eid in seen_ids:
                 continue
@@ -1133,7 +1216,7 @@ class CapCutGui:
             if show_message:
                 messagebox.showwarning(
                     "Transition catalog",
-                    "Không tìm thấy effect transition có tên tiếng Việt trong project thư viện.",
+                    "Không tìm thấy effect transition có tên dễ đọc trong project thư viện.",
                 )
             return
 
@@ -1241,6 +1324,8 @@ class CapCutGui:
         if not selected_projects:
             messagebox.showerror("Chưa chọn dự án", "Vui lòng chọn ít nhất 1 dự án trong danh sách.")
             return
+        if not self._confirm_bulk_action("thêm transition", selected_projects):
+            return
 
         selected_effect_ids = self._get_selected_transition_effect_ids()
         if not selected_effect_ids:
@@ -1303,6 +1388,168 @@ class CapCutGui:
             self.log_queue.put(out)
         self.log_queue.put(f"PROCESS_EXIT:{overall_code}")
 
+    def _on_keyframe_mode_changed(self) -> None:
+        mode = self.keyframe_mode_var.get()
+        try:
+            s = float(self.keyframe_start_percent_var.get().strip())
+            e = float(self.keyframe_end_percent_var.get().strip())
+        except Exception:
+            return
+
+        # Keep UX intuitive: zoom in => start <= end, zoom out => start >= end.
+        if mode == "zoom_in" and s > e:
+            self.keyframe_start_percent_var.set(f"{e:g}")
+            self.keyframe_end_percent_var.set(f"{s:g}")
+        elif mode == "zoom_out" and s < e:
+            self.keyframe_start_percent_var.set(f"{e:g}")
+            self.keyframe_end_percent_var.set(f"{s:g}")
+
+    def _validate_keyframe_inputs(self) -> tuple[float, float, bool, float] | None:
+        mode = self.keyframe_mode_var.get()
+        if mode not in {"zoom_in", "zoom_out"}:
+            messagebox.showerror("Thiếu input", "Loại zoom không hợp lệ.")
+            return None
+
+        try:
+            start_percent = float(self.keyframe_start_percent_var.get().strip())
+            end_percent = float(self.keyframe_end_percent_var.get().strip())
+        except ValueError:
+            messagebox.showerror("Thiếu input", "Start/End (%) phải là số hợp lệ.")
+            return None
+
+        if start_percent <= 0 or end_percent <= 0:
+            messagebox.showerror("Input không hợp lệ", "Start/End (%) phải > 0.")
+            return None
+
+        # Keep numeric range safe enough for customer use.
+        if start_percent < 10 or start_percent > 1000 or end_percent < 10 or end_percent > 1000:
+            messagebox.showerror("Input không hợp lệ", "Start/End (%) phải nằm trong khoảng 10..1000.")
+            return None
+
+        if abs(start_percent - end_percent) < 1e-9:
+            messagebox.showerror("Input không hợp lệ", "Start và End không được bằng nhau (không tạo chuyển động zoom).")
+            return None
+
+        if mode == "zoom_in" and not (start_percent < end_percent):
+            messagebox.showerror("Input không hợp lệ", "Với Zoom in: Start (%) phải nhỏ hơn End (%).")
+            return None
+
+        if mode == "zoom_out" and not (start_percent > end_percent):
+            messagebox.showerror("Input không hợp lệ", "Với Zoom out: Start (%) phải lớn hơn End (%).")
+            return None
+
+        use_full_duration = bool(self.keyframe_full_duration_var.get())
+        duration_seconds = 0.0
+        if not use_full_duration:
+            try:
+                duration_seconds = float(self.keyframe_duration_seconds_var.get().strip())
+            except ValueError:
+                messagebox.showerror("Thiếu input", "Duration (giây) phải là số hợp lệ.")
+                return None
+            if duration_seconds <= 0:
+                messagebox.showerror("Input không hợp lệ", "Duration (giây) phải > 0.")
+                return None
+            if duration_seconds > 36000:
+                messagebox.showerror("Input không hợp lệ", "Duration (giây) quá lớn (tối đa 36000s).")
+                return None
+
+        return start_percent, end_percent, use_full_duration, duration_seconds
+
+    def _on_apply_keyframes_only(self) -> None:
+        if self.current_process is not None or self.current_task_running:
+            messagebox.showwarning("Đang bận", "Đang có tiến trình chạy. Vui lòng chờ xong.")
+            return
+
+        selected_projects = self._collect_selected_projects()
+        if not selected_projects:
+            messagebox.showerror("Chưa chọn dự án", "Vui lòng chọn ít nhất 1 dự án trong danh sách.")
+            return
+        if not self._confirm_bulk_action("thêm keyframe", selected_projects):
+            return
+
+        validated = self._validate_keyframe_inputs()
+        if validated is None:
+            return
+        start_percent, end_percent, use_full_duration, duration_seconds = validated
+
+        self.current_action = "keyframe_apply"
+        self._append_log("\n--- Apply keyframe zoom ---\n")
+        self._append_log(
+            f"projects={len(selected_projects)} mode={self.keyframe_mode_var.get()} only_picture={self.keyframe_only_picture_var.get()} start={start_percent}% end={end_percent}% full_duration={use_full_duration} duration_s={duration_seconds}\n"
+        )
+        self._set_status(f"Đang thêm keyframe cho {len(selected_projects)} dự án...", "info")
+        self._set_running_state(True)
+        self.current_task_running = True
+
+        threading.Thread(
+            target=self._execute_apply_keyframes_only,
+            args=(
+                selected_projects,
+                self.keyframe_mode_var.get(),
+                bool(self.keyframe_only_picture_var.get()),
+                start_percent,
+                end_percent,
+                use_full_duration,
+                duration_seconds,
+            ),
+            daemon=True,
+        ).start()
+
+    def _execute_apply_keyframes_only(
+        self,
+        projects: list[str],
+        zoom_mode: str,
+        only_picture: bool,
+        start_percent: float,
+        end_percent: float,
+        use_full_duration: bool,
+        duration_seconds: float,
+    ) -> None:
+        output_buf = io.StringIO()
+        overall_code = 0
+
+        try:
+            with contextlib.redirect_stdout(output_buf):
+                for idx, project in enumerate(projects, start=1):
+                    project_dir = Path(project)
+                    print(f"--- keyframe project {idx}/{len(projects)}: {project_dir} ---")
+                    print(
+                        f"keyframe_mode={zoom_mode} start={start_percent}% end={end_percent}% full_duration={use_full_duration} duration_s={duration_seconds}"
+                    )
+
+                    bundle = load_project(project_dir)
+                    added_main = apply_zoom_keyframes_to_draft(
+                        bundle.main_draft,
+                        only_picture=only_picture,
+                        start_percent=start_percent,
+                        end_percent=end_percent,
+                        use_full_duration=use_full_duration,
+                        duration_seconds=duration_seconds,
+                    )
+                    write_json_atomic(bundle.main_draft_path, bundle.main_draft)
+                    print(f"main_keyframes_applied={added_main}")
+
+                    for tp in bundle.timeline_draft_paths:
+                        d = bundle.timelines[tp]
+                        added_tl = apply_zoom_keyframes_to_draft(
+                            d,
+                            only_picture=only_picture,
+                            start_percent=start_percent,
+                            end_percent=end_percent,
+                            use_full_duration=use_full_duration,
+                            duration_seconds=duration_seconds,
+                        )
+                        write_json_atomic(tp, d)
+                        print(f"timeline={tp} keyframes_applied={added_tl}")
+        except Exception:
+            output_buf.write(traceback.format_exc())
+            overall_code = 1
+
+        out = output_buf.getvalue()
+        if out:
+            self.log_queue.put(out)
+        self.log_queue.put(f"PROCESS_EXIT:{overall_code}")
+
     def _on_sync_audio(self) -> None:
         self.mode_var.set("sync")
         self._start_run()
@@ -1319,6 +1566,8 @@ class CapCutGui:
 
         if not selected_projects:
             messagebox.showerror("Chưa chọn dự án", "Vui lòng chọn ít nhất 1 dự án trong danh sách.")
+            return
+        if not self._confirm_bulk_action("đồng bộ", selected_projects):
             return
 
         try:
@@ -1528,6 +1777,7 @@ class CapCutGui:
 
         is_batch = self.current_action == "batch_create"
         is_transition_apply = self.current_action == "transition_apply"
+        is_keyframe_apply = self.current_action == "keyframe_apply"
 
         if is_batch:
             success_title = "Tạo batch xong"
@@ -1541,6 +1791,12 @@ class CapCutGui:
             error_title = "Thêm transition lỗi"
             ok_status = "Thêm transition thành công"
             err_status = f"Thêm transition lỗi (mã {return_code})"
+        elif is_keyframe_apply:
+            success_title = "Thêm keyframe xong"
+            success_message = "Đã thêm keyframe zoom cho các dự án đã chọn."
+            error_title = "Thêm keyframe lỗi"
+            ok_status = "Thêm keyframe thành công"
+            err_status = f"Thêm keyframe lỗi (mã {return_code})"
         else:
             success_title = "Đồng bộ xong"
             success_message = "Đã đồng bộ các dự án đã chọn thành công."
@@ -1576,6 +1832,8 @@ class CapCutGui:
             self.batch_button.configure(state=new_state)
         if self.apply_transition_button is not None:
             self.apply_transition_button.configure(state=new_state)
+        if self.apply_keyframe_button is not None:
+            self.apply_keyframe_button.configure(state=new_state)
 
     def _set_status(self, message: str, status_type: str = "info") -> None:
         self.status_var.set(message)

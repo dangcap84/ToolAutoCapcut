@@ -17,13 +17,13 @@ pip install -r requirements.txt
 if exist "%cd%\transition_effect_pack.zip" del /f /q "%cd%\transition_effect_pack.zip"
 if exist "%cd%\transition_effect_pack" powershell -NoProfile -Command "Compress-Archive -Path '%cd%\transition_effect_pack\*' -DestinationPath '%cd%\transition_effect_pack.zip' -Force" >nul
 
-pyinstaller --noconfirm --clean --onefile --windowed --paths . --add-data "transition_effect_pack.zip;." --hidden-import cli --hidden-import project_loader --hidden-import media_index --hidden-import duration_probe --hidden-import timeline_sync --hidden-import project_writer --hidden-import transition_tools --hidden-import builtin_transition_catalog --name capcut_gui_v3.8.16 gui.py
+pyinstaller --noconfirm --clean --onefile --windowed --paths . --add-data "transition_effect_pack.zip;." --hidden-import cli --hidden-import project_loader --hidden-import media_index --hidden-import duration_probe --hidden-import timeline_sync --hidden-import project_writer --hidden-import transition_tools --hidden-import builtin_transition_catalog --hidden-import keyframe_tools --name capcut_gui_v3.9.5 gui.py
 
 if not exist D:\capcut_adapter_test mkdir D:\capcut_adapter_test
-copy /Y "%cd%\dist\capcut_gui_v3.8.16.exe" "D:\capcut_adapter_test\capcut_gui_v3.8.16.exe" >nul
+copy /Y "%cd%\dist\capcut_gui_v3.9.5.exe" "D:\capcut_adapter_test\capcut_gui_v3.9.5.exe" >nul
 
 echo.
 echo Build done. EXE path:
-echo D:\capcut_adapter_test\capcut_gui_v3.8.16.exe
+echo D:\capcut_adapter_test\capcut_gui_v3.9.5.exe
 echo Transition pack is embedded inside EXE.
 pause
