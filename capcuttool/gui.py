@@ -67,7 +67,7 @@ BULK_ACTION_WARNING_THRESHOLD = 5
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.5")
+        self.root.title("CapCut Sync v3.9.6")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -443,57 +443,50 @@ class CapCutGui:
         keyframe_card = ttk.Labelframe(
             keyframe_tab,
             text="Keyframe Zoom",
-            padding=10,
+            padding=8,
             style="ProjectCard.TLabelframe",
         )
         keyframe_card.grid(row=0, column=0, sticky=NSEW)
-        keyframe_card.columnconfigure(1, weight=1)
+        keyframe_card.columnconfigure(0, weight=1)
 
-        ttk.Label(
-            keyframe_card,
-            text="Thiết lập nhanh rồi bấm Áp dụng.",
-            style="Subtle.TLabel",
-            wraplength=360,
-            justify="left",
-        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        row_mode = ttk.Frame(keyframe_card, style="Panel.TFrame")
+        row_mode.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        ttk.Label(row_mode, text="Kiểu:", style="Subtle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(row_mode, text="In", value="zoom_in", variable=self.keyframe_mode_var).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Radiobutton(row_mode, text="Out", value="zoom_out", variable=self.keyframe_mode_var).grid(row=0, column=2, sticky="w", padx=(8, 0))
 
-        ttk.Label(keyframe_card, text="Kiểu chuyển động:", style="Subtle.TLabel").grid(row=1, column=0, sticky="w")
-        zoom_row = ttk.Frame(keyframe_card, style="Panel.TFrame")
-        zoom_row.grid(row=1, column=1, columnspan=2, sticky="w")
-        ttk.Radiobutton(zoom_row, text="Zoom in", value="zoom_in", variable=self.keyframe_mode_var).grid(row=0, column=0, sticky="w")
-        ttk.Radiobutton(zoom_row, text="Zoom out", value="zoom_out", variable=self.keyframe_mode_var).grid(row=0, column=1, sticky="w", padx=(14, 0))
+        row_values = ttk.Frame(keyframe_card, style="Panel.TFrame")
+        row_values.grid(row=1, column=0, sticky="ew", pady=(0, 4))
+        ttk.Label(row_values, text="Start", style="Subtle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Entry(row_values, textvariable=self.keyframe_start_percent_var, width=6, style="Search.TEntry").grid(row=0, column=1, sticky="w", padx=(4, 10))
+        ttk.Label(row_values, text="End", style="Subtle.TLabel").grid(row=0, column=2, sticky="w")
+        ttk.Entry(row_values, textvariable=self.keyframe_end_percent_var, width=6, style="Search.TEntry").grid(row=0, column=3, sticky="w", padx=(4, 10))
+        ttk.Label(row_values, text="Dur(s)", style="Subtle.TLabel").grid(row=0, column=4, sticky="w")
+        ttk.Entry(row_values, textvariable=self.keyframe_duration_seconds_var, width=6, style="Search.TEntry").grid(row=0, column=5, sticky="w", padx=(4, 0))
 
+        row_opts = ttk.Frame(keyframe_card, style="Panel.TFrame")
+        row_opts.grid(row=2, column=0, sticky="ew", pady=(0, 4))
         ttk.Checkbutton(
-            keyframe_card,
+            row_opts,
             text="Only picture",
             variable=self.keyframe_only_picture_var,
             style="Project.TCheckbutton",
-        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
-
-        ttk.Label(keyframe_card, text="Start (%):", style="Subtle.TLabel").grid(row=3, column=0, sticky="w", pady=(8, 0))
-        ttk.Entry(keyframe_card, textvariable=self.keyframe_start_percent_var, width=10, style="Search.TEntry").grid(row=3, column=1, sticky="w", pady=(8, 0))
-
-        ttk.Label(keyframe_card, text="End (%):", style="Subtle.TLabel").grid(row=4, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(keyframe_card, textvariable=self.keyframe_end_percent_var, width=10, style="Search.TEntry").grid(row=4, column=1, sticky="w", pady=(6, 0))
-
+        ).grid(row=0, column=0, sticky="w")
         ttk.Checkbutton(
-            keyframe_card,
+            row_opts,
             text="Full duration",
             variable=self.keyframe_full_duration_var,
             style="Project.TCheckbutton",
-        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
-
-        ttk.Label(keyframe_card, text="Duration (s):", style="Subtle.TLabel").grid(row=6, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(keyframe_card, textvariable=self.keyframe_duration_seconds_var, width=10, style="Search.TEntry").grid(row=6, column=1, sticky="w", pady=(6, 0))
+        ).grid(row=0, column=1, sticky="w", padx=(12, 0))
 
         self.apply_keyframe_button = ttk.Button(
             keyframe_card,
             text="Áp dụng",
             style="Accent.TButton",
             command=self._on_apply_keyframes_only,
-            width=12,
+            width=11,
         )
-        self.apply_keyframe_button.grid(row=7, column=0, sticky="w", pady=(10, 0))
+        self.apply_keyframe_button.grid(row=3, column=0, sticky="w", pady=(2, 0))
 
         right_panel = ttk.Frame(main_frame, style="Panel.TFrame")
         right_panel.grid(row=1, column=1, sticky=NSEW)
