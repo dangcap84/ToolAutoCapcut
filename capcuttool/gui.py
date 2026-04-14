@@ -34,6 +34,7 @@ from transition_tools import (
     seed_effect_cache_from_zip,
 )
 from keyframe_tools import apply_zoom_keyframes_to_draft
+from mask_tools import apply_mask_to_draft
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CAPCUT_PROJECT_ROOT = Path(
@@ -62,12 +63,13 @@ TEXT = "#e5eefc"
 SUBTEXT = "#94a3b8"
 TRANSITION_CATALOG_LIMIT = 50
 BULK_ACTION_WARNING_THRESHOLD = 5
+MASK_BACKGROUND_CATALOG_PATH = BASE_DIR / "mask_background_catalog.json"
 
 
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.6")
+        self.root.title("CapCut Sync v3.9.8")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -204,6 +206,10 @@ class CapCutGui:
         self.keyframe_full_duration_var = tk.BooleanVar(value=True)
         self.keyframe_duration_seconds_var = tk.StringVar(value="3.0")
 
+        self.mask_overlay_width_var = tk.StringVar(value="1800")
+        self.mask_overlay_height_var = tk.StringVar(value="900")
+        self.mask_backgrounds_var = tk.StringVar(value="")
+
         self.project_items: list[tuple[str, str, tk.BooleanVar, ttk.Checkbutton]] = []
         self.project_stats_var = tk.StringVar(value="Đã chọn 0/0 dự án")
 
@@ -216,6 +222,7 @@ class CapCutGui:
         self.batch_button: ttk.Button | None = None
         self.apply_transition_button: ttk.Button | None = None
         self.apply_keyframe_button: ttk.Button | None = None
+        self.apply_mask_button: ttk.Button | None = None
         self.progress_bar: ttk.Progressbar | None = None
         self.status_badge: ttk.Label | None = None
         self.status_label: ttk.Label | None = None
@@ -272,17 +279,20 @@ class CapCutGui:
         create_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
         transition_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
         keyframe_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
+        mask_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
         sync_tab.columnconfigure(0, weight=1)
         create_tab.columnconfigure(0, weight=1)
         transition_tab.columnconfigure(0, weight=1)
         transition_tab.rowconfigure(0, weight=1)
         keyframe_tab.columnconfigure(0, weight=1)
         keyframe_tab.rowconfigure(0, weight=1)
+        mask_tab.columnconfigure(0, weight=1)
 
         nav_tabs.add(create_tab, text="Tạo dự án")
         nav_tabs.add(sync_tab, text="Đồng bộ")
         nav_tabs.add(transition_tab, text="Chuyển cảnh")
         nav_tabs.add(keyframe_tab, text="Keyframe")
+        nav_tabs.add(mask_tab, text="Mask")
 
         action_card = ttk.Labelframe(
             sync_tab,
@@ -487,6 +497,45 @@ class CapCutGui:
             width=11,
         )
         self.apply_keyframe_button.grid(row=3, column=0, sticky="w", pady=(2, 0))
+
+        mask_card = ttk.Labelframe(
+            mask_tab,
+            text="Video Mask",
+            padding=12,
+            style="ProjectCard.TLabelframe",
+        )
+        mask_card.grid(row=0, column=0, sticky=EW)
+        mask_card.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            mask_card,
+            text="Flow: gộp media thành clip con, tạo overlay mask, đẩy lên line trên và thay nền line chính.",
+            style="Subtle.TLabel",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 10))
+
+        ttk.Label(mask_card, text="Overlay W:", style="Subtle.TLabel").grid(row=1, column=0, sticky="w")
+        ttk.Entry(mask_card, textvariable=self.mask_overlay_width_var, style="Search.TEntry", width=10).grid(row=1, column=1, sticky="w", padx=(6, 0))
+
+        ttk.Label(mask_card, text="Overlay H:", style="Subtle.TLabel").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(mask_card, textvariable=self.mask_overlay_height_var, style="Search.TEntry", width=10).grid(row=2, column=1, sticky="w", padx=(6, 0), pady=(6, 0))
+
+        ttk.Label(mask_card, text="Backgrounds (phân cách dấu phẩy):", style="Subtle.TLabel").grid(row=3, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(mask_card, textvariable=self.mask_backgrounds_var, style="Search.TEntry").grid(row=3, column=1, columnspan=2, sticky=EW, padx=(6, 0), pady=(8, 0))
+
+        self.apply_mask_button = ttk.Button(
+            mask_card,
+            text="Áp dụng",
+            style="Accent.TButton",
+            command=self._on_apply_mask_only,
+            width=12,
+        )
+        self.apply_mask_button.grid(row=4, column=0, sticky="w", pady=(10, 0))
+
+        ttk.Label(
+            mask_card,
+            text="Mẹo: có thể dán 2 path background để lưu catalog tái dùng cho lần sau.",
+            style="Subtle.TLabel",
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         right_panel = ttk.Frame(main_frame, style="Panel.TFrame")
         right_panel.grid(row=1, column=1, sticky=NSEW)
@@ -1381,6 +1430,132 @@ class CapCutGui:
             self.log_queue.put(out)
         self.log_queue.put(f"PROCESS_EXIT:{overall_code}")
 
+    def _parse_background_paths(self, raw_text: str) -> list[str]:
+        txt = (raw_text or "").strip()
+        if not txt:
+            return []
+        chunks = re.split(r"[,;\n]+", txt)
+        out: list[str] = []
+        seen: set[str] = set()
+        for c in chunks:
+            item = c.strip().strip('"').strip("'")
+            if not item:
+                continue
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(item)
+        return out
+
+    def _validate_mask_inputs(self) -> tuple[float, float, list[str]] | None:
+        try:
+            w = float(self.mask_overlay_width_var.get().strip())
+            h = float(self.mask_overlay_height_var.get().strip())
+        except ValueError:
+            messagebox.showerror("Thiếu input", "Overlay W/H phải là số hợp lệ.")
+            return None
+
+        if w <= 0 or h <= 0:
+            messagebox.showerror("Input không hợp lệ", "Overlay W/H phải > 0.")
+            return None
+        if w > 8000 or h > 8000:
+            messagebox.showerror("Input không hợp lệ", "Overlay W/H quá lớn (<= 8000).")
+            return None
+
+        bg_paths = self._parse_background_paths(self.mask_backgrounds_var.get())
+        for p in bg_paths:
+            if not Path(p).exists():
+                messagebox.showerror("Background không tồn tại", f"Không tìm thấy file: {p}")
+                return None
+
+        return w, h, bg_paths
+
+    def _on_apply_mask_only(self) -> None:
+        if self.current_process is not None or self.current_task_running:
+            messagebox.showwarning("Đang bận", "Đang có tiến trình chạy. Vui lòng chờ xong.")
+            return
+
+        selected_projects = self._collect_selected_projects()
+        if not selected_projects:
+            messagebox.showerror("Chưa chọn dự án", "Vui lòng chọn ít nhất 1 dự án trong danh sách.")
+            return
+        if not self._confirm_bulk_action("áp dụng mask", selected_projects):
+            return
+
+        validated = self._validate_mask_inputs()
+        if validated is None:
+            return
+        overlay_w, overlay_h, bg_paths = validated
+
+        self.current_action = "mask_apply"
+        self._append_log("\n--- Apply mask ---\n")
+        self._append_log(
+            f"projects={len(selected_projects)} overlay={overlay_w}x{overlay_h} backgrounds={len(bg_paths)} catalog={MASK_BACKGROUND_CATALOG_PATH}\n"
+        )
+        self._set_status(f"Đang áp dụng mask cho {len(selected_projects)} dự án...", "info")
+        self._set_running_state(True)
+        self.current_task_running = True
+
+        threading.Thread(
+            target=self._execute_apply_mask_only,
+            args=(selected_projects, overlay_w, overlay_h, bg_paths),
+            daemon=True,
+        ).start()
+
+    def _execute_apply_mask_only(
+        self,
+        projects: list[str],
+        overlay_w: float,
+        overlay_h: float,
+        bg_paths: list[str],
+    ) -> None:
+        output_buf = io.StringIO()
+        overall_code = 0
+
+        try:
+            with contextlib.redirect_stdout(output_buf):
+                for idx, project in enumerate(projects, start=1):
+                    project_dir = Path(project)
+                    print(f"--- mask project {idx}/{len(projects)}: {project_dir} ---")
+                    print(f"overlay_size={overlay_w}x{overlay_h}")
+                    print(f"background_inputs={len(bg_paths)}")
+
+                    bundle = load_project(project_dir)
+                    result_main = apply_mask_to_draft(
+                        bundle.main_draft,
+                        overlay_width=overlay_w,
+                        overlay_height=overlay_h,
+                        background_paths=bg_paths,
+                        template_draft=bundle.main_draft,
+                        background_catalog_path=MASK_BACKGROUND_CATALOG_PATH,
+                    )
+                    write_json_atomic(bundle.main_draft_path, bundle.main_draft)
+                    print(f"main_mask_updated={result_main.get('updated', 0)} bg_catalog_added={result_main.get('bg_added', 0)}")
+
+                    for tp in bundle.timeline_draft_paths:
+                        d = bundle.timelines[tp]
+                        result_tl = apply_mask_to_draft(
+                            d,
+                            overlay_width=overlay_w,
+                            overlay_height=overlay_h,
+                            background_paths=bg_paths,
+                            template_draft=bundle.main_draft,
+                            background_catalog_path=MASK_BACKGROUND_CATALOG_PATH,
+                        )
+                        write_json_atomic(tp, d)
+                        print(
+                            f"timeline={tp} mask_updated={result_tl.get('updated', 0)} bg_catalog_added={result_tl.get('bg_added', 0)}"
+                        )
+        except Exception:
+            output_buf.write(traceback.format_exc())
+            overall_code = 1
+
+        out = output_buf.getvalue()
+        if out:
+            self.log_queue.put(out)
+        self.log_queue.put(f"PROCESS_EXIT:{overall_code}")
+
     def _on_keyframe_mode_changed(self) -> None:
         mode = self.keyframe_mode_var.get()
         try:
@@ -1771,6 +1946,7 @@ class CapCutGui:
         is_batch = self.current_action == "batch_create"
         is_transition_apply = self.current_action == "transition_apply"
         is_keyframe_apply = self.current_action == "keyframe_apply"
+        is_mask_apply = self.current_action == "mask_apply"
 
         if is_batch:
             success_title = "Tạo batch xong"
@@ -1790,6 +1966,12 @@ class CapCutGui:
             error_title = "Thêm keyframe lỗi"
             ok_status = "Thêm keyframe thành công"
             err_status = f"Thêm keyframe lỗi (mã {return_code})"
+        elif is_mask_apply:
+            success_title = "Áp dụng mask xong"
+            success_message = "Đã áp dụng mask cho các dự án đã chọn."
+            error_title = "Áp dụng mask lỗi"
+            ok_status = "Áp dụng mask thành công"
+            err_status = f"Áp dụng mask lỗi (mã {return_code})"
         else:
             success_title = "Đồng bộ xong"
             success_message = "Đã đồng bộ các dự án đã chọn thành công."
@@ -1827,6 +2009,8 @@ class CapCutGui:
             self.apply_transition_button.configure(state=new_state)
         if self.apply_keyframe_button is not None:
             self.apply_keyframe_button.configure(state=new_state)
+        if self.apply_mask_button is not None:
+            self.apply_mask_button.configure(state=new_state)
 
     def _set_status(self, message: str, status_type: str = "info") -> None:
         self.status_var.set(message)

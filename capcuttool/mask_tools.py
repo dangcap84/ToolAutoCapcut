@@ -1,0 +1,369 @@
+from __future__ import annotations
+
+import copy
+import json
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+
+def _new_id() -> str:
+    return str(uuid4()).upper()
+
+
+def _clone(obj: dict[str, Any] | None) -> dict[str, Any]:
+    return copy.deepcopy(obj) if isinstance(obj, dict) else {}
+
+
+def _get_canvas_size(draft: dict[str, Any]) -> tuple[float, float]:
+    cfg = draft.get("canvas_config") if isinstance(draft, dict) else None
+    w = float((cfg or {}).get("width") or 1920)
+    h = float((cfg or {}).get("height") or 1080)
+    return max(1.0, w), max(1.0, h)
+
+
+def _select_main_video_track(draft: dict[str, Any]) -> dict[str, Any] | None:
+    tracks = draft.get("tracks")
+    if not isinstance(tracks, list):
+        return None
+
+    candidates: list[tuple[int, dict[str, Any]]] = []
+    for tr in tracks:
+        if not isinstance(tr, dict):
+            continue
+        if str(tr.get("type") or "").lower() != "video":
+            continue
+        segs = tr.get("segments")
+        if not isinstance(segs, list):
+            continue
+        flag = int(tr.get("flag") or 0)
+        # Ưu tiên track chính (flag=0), rồi tới track có nhiều segment nhất.
+        score = (1 if flag == 0 else 0, len(segs))
+        candidates.append((score[0] * 10_000 + score[1], tr))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
+
+
+def _ensure_video_track(draft: dict[str, Any], *, flag: int) -> dict[str, Any]:
+    tracks = draft.get("tracks")
+    if not isinstance(tracks, list):
+        tracks = []
+        draft["tracks"] = tracks
+
+    for tr in tracks:
+        if not isinstance(tr, dict):
+            continue
+        if str(tr.get("type") or "").lower() != "video":
+            continue
+        if int(tr.get("flag") or 0) == flag:
+            if not isinstance(tr.get("segments"), list):
+                tr["segments"] = []
+            return tr
+
+    tr = {
+        "id": _new_id(),
+        "type": "video",
+        "name": "",
+        "segments": [],
+        "flag": int(flag),
+    }
+    tracks.append(tr)
+    return tr
+
+
+def _sum_video_track_duration_us(track: dict[str, Any]) -> int:
+    segs = track.get("segments")
+    if not isinstance(segs, list):
+        return 0
+    total = 0
+    for seg in segs:
+        if not isinstance(seg, dict):
+            continue
+        tr = seg.get("target_timerange") or {}
+        start = int(tr.get("start") or 0)
+        dur = int(tr.get("duration") or 0)
+        total = max(total, start + max(0, dur))
+    return total
+
+
+def _build_mask_material(
+    *,
+    overlay_width: float,
+    overlay_height: float,
+    canvas_w: float,
+    canvas_h: float,
+    template_mask: dict[str, Any] | None,
+) -> dict[str, Any]:
+    obj = _clone(template_mask)
+    if not obj:
+        obj = {
+            "id": "",
+            "type": "mask",
+            "name": "Hình chữ nhật",
+            "resource_type": "rectangle",
+            "resource_id": "7374021450748924432",
+            "config": {},
+        }
+
+    obj["id"] = _new_id()
+    obj["type"] = "mask"
+    obj.setdefault("name", "Hình chữ nhật")
+    cfg = obj.get("config") if isinstance(obj.get("config"), dict) else {}
+    cfg["width"] = max(0.01, min(1.0, float(overlay_width) / float(canvas_w)))
+    cfg["height"] = max(0.01, min(1.0, float(overlay_height) / float(canvas_h)))
+    cfg.setdefault("centerX", 0.0)
+    cfg.setdefault("centerY", 0.0)
+    cfg.setdefault("rotation", 0.0)
+    cfg.setdefault("feather", 0.0)
+    cfg.setdefault("expansion", 0.0)
+    cfg.setdefault("invert", False)
+    cfg.setdefault("roundCorner", 0.0)
+    obj["config"] = cfg
+    return obj
+
+
+def _build_combination_material(
+    *,
+    total_duration_us: int,
+    template_video: dict[str, Any] | None,
+) -> dict[str, Any]:
+    vm = _clone(template_video)
+    vm["id"] = _new_id()
+    vm["type"] = "video"
+    vm["path"] = ""
+    vm["material_id"] = ""
+    vm["extra_type_option"] = 2
+    vm["duration"] = int(total_duration_us)
+    vm["material_name"] = "Clip ghép mask"
+    return vm
+
+
+def _build_draft_material(
+    *,
+    base_before_mask: dict[str, Any],
+    total_duration_us: int,
+    template_draft_material: dict[str, Any] | None,
+) -> dict[str, Any]:
+    dm = _clone(template_draft_material)
+    dm["id"] = _new_id()
+    dm["type"] = "combination"
+    dm.setdefault("combination_type", "none")
+
+    nested = dm.get("draft")
+    if not isinstance(nested, dict):
+        nested = copy.deepcopy(base_before_mask)
+    nested["duration"] = int(total_duration_us)
+
+    cfg = nested.get("canvas_config") if isinstance(nested.get("canvas_config"), dict) else {}
+    src_cfg = base_before_mask.get("canvas_config") if isinstance(base_before_mask.get("canvas_config"), dict) else {}
+    if src_cfg:
+        cfg["width"] = src_cfg.get("width", cfg.get("width", 1920))
+        cfg["height"] = src_cfg.get("height", cfg.get("height", 1080))
+        cfg["ratio"] = src_cfg.get("ratio", cfg.get("ratio", "original"))
+    nested["canvas_config"] = cfg
+
+    dm["draft"] = nested
+    return dm
+
+
+def _ensure_material_list(materials: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    cur = materials.get(key)
+    if not isinstance(cur, list):
+        cur = []
+        materials[key] = cur
+    return cur
+
+
+def _register_background_catalog(paths: list[str], catalog_path: Path | None) -> int:
+    if catalog_path is None:
+        return 0
+
+    catalog_path.parent.mkdir(parents=True, exist_ok=True)
+    items: list[dict[str, Any]] = []
+    if catalog_path.exists():
+        try:
+            raw = json.loads(catalog_path.read_text(encoding="utf-8"))
+            if isinstance(raw, list):
+                items = [x for x in raw if isinstance(x, dict)]
+        except Exception:
+            items = []
+
+    by_path = {str((x.get("path") or "")).lower(): x for x in items}
+    added = 0
+    for p in paths:
+        key = str(Path(p)).lower()
+        if key in by_path:
+            continue
+        obj = {
+            "id": _new_id(),
+            "name": Path(p).name,
+            "path": str(Path(p)).replace("\\", "/"),
+            "added_at": "",
+        }
+        items.append(obj)
+        by_path[key] = obj
+        added += 1
+
+    catalog_path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+    return added
+
+
+def apply_mask_to_draft(
+    draft: dict[str, Any],
+    *,
+    overlay_width: float,
+    overlay_height: float,
+    background_paths: list[str],
+    template_draft: dict[str, Any] | None,
+    background_catalog_path: Path | None,
+) -> dict[str, int]:
+    if not isinstance(draft, dict):
+        return {"updated": 0, "bg_added": 0}
+
+    tracks = draft.get("tracks")
+    if not isinstance(tracks, list) or not tracks:
+        return {"updated": 0, "bg_added": 0}
+
+    main_track = _select_main_video_track(draft)
+    if main_track is None:
+        return {"updated": 0, "bg_added": 0}
+
+    main_segments = main_track.get("segments")
+    if not isinstance(main_segments, list) or not main_segments:
+        return {"updated": 0, "bg_added": 0}
+
+    materials = draft.get("materials")
+    if not isinstance(materials, dict):
+        materials = {}
+        draft["materials"] = materials
+
+    base_before_mask = copy.deepcopy(draft)
+
+    videos = _ensure_material_list(materials, "videos")
+    drafts = _ensure_material_list(materials, "drafts")
+    masks = _ensure_material_list(materials, "common_mask")
+
+    template_materials = template_draft.get("materials") if isinstance(template_draft, dict) else {}
+    if not isinstance(template_materials, dict):
+        template_materials = {}
+
+    template_video_comb = None
+    for v in template_materials.get("videos") or []:
+        if isinstance(v, dict) and int(v.get("extra_type_option") or 0) == 2:
+            template_video_comb = v
+            break
+    if template_video_comb is None and videos:
+        template_video_comb = videos[0]
+
+    template_draft_material = None
+    tdrafts = template_materials.get("drafts") or []
+    if tdrafts and isinstance(tdrafts[0], dict):
+        template_draft_material = tdrafts[0]
+
+    template_mask = None
+    tmasks = template_materials.get("common_mask") or []
+    if tmasks and isinstance(tmasks[0], dict):
+        template_mask = tmasks[0]
+
+    total_duration_us = _sum_video_track_duration_us(main_track)
+    if total_duration_us <= 0:
+        total_duration_us = sum(int((s.get("target_timerange") or {}).get("duration") or 0) for s in main_segments)
+    total_duration_us = max(1, int(total_duration_us))
+
+    canvas_w, canvas_h = _get_canvas_size(draft)
+
+    comb_video = _build_combination_material(
+        total_duration_us=total_duration_us,
+        template_video=template_video_comb,
+    )
+    videos.append(comb_video)
+
+    comb_draft = _build_draft_material(
+        base_before_mask=base_before_mask,
+        total_duration_us=total_duration_us,
+        template_draft_material=template_draft_material,
+    )
+    drafts.append(comb_draft)
+
+    mask_mat = _build_mask_material(
+        overlay_width=overlay_width,
+        overlay_height=overlay_height,
+        canvas_w=canvas_w,
+        canvas_h=canvas_h,
+        template_mask=template_mask,
+    )
+    masks.append(mask_mat)
+
+    # 1) line chính: thay bằng background nếu user có truyền vào.
+    bg_paths = [str(Path(p)).replace("\\", "/") for p in background_paths if str(p).strip()]
+    bg_added = _register_background_catalog(bg_paths, background_catalog_path)
+
+    if bg_paths:
+        seg_template = _clone(main_segments[0])
+        vm_template = _clone(videos[0]) if videos else {}
+
+        bg_ids: list[str] = []
+        for p in bg_paths:
+            vm = _clone(vm_template)
+            vm["id"] = _new_id()
+            vm["type"] = "video"
+            vm["path"] = p
+            vm["material_name"] = Path(p).name
+            vm["duration"] = int(total_duration_us)
+            videos.append(vm)
+            bg_ids.append(vm["id"])
+
+        rebuilt: list[dict[str, Any]] = []
+        cursor = 0
+        for idx, old_seg in enumerate(main_segments):
+            dur = int(((old_seg.get("target_timerange") or {}).get("duration") or 0))
+            dur = max(1, dur)
+            seg = _clone(seg_template)
+            seg["id"] = _new_id()
+            seg["material_id"] = bg_ids[idx % len(bg_ids)]
+            seg["target_timerange"] = {"start": int(cursor), "duration": int(dur)}
+            seg["source_timerange"] = {"start": 0, "duration": int(dur)}
+            seg["render_index"] = 0
+            seg["track_render_index"] = 0
+            seg["enable_video_mask"] = True
+            rebuilt.append(seg)
+            cursor += dur
+
+        main_track["segments"] = rebuilt
+    else:
+        for seg in main_segments:
+            if isinstance(seg, dict):
+                seg["enable_video_mask"] = True
+
+    # 2) tạo track trên cùng chứa 1 clip combination + mask.
+    top_track = _ensure_video_track(draft, flag=2)
+    base_seg = _clone(main_segments[0])
+    top_seg = _clone(base_seg)
+    top_seg["id"] = _new_id()
+    top_seg["material_id"] = comb_video["id"]
+    top_seg["target_timerange"] = {"start": 0, "duration": int(total_duration_us)}
+    top_seg["source_timerange"] = {"start": 0, "duration": int(total_duration_us)}
+    top_seg["render_index"] = 1
+    top_seg["track_render_index"] = 1
+    top_seg["enable_video_mask"] = True
+
+    refs = top_seg.get("extra_material_refs")
+    if not isinstance(refs, list):
+        refs = []
+    refs = [str(x) for x in refs if x]
+    if comb_draft["id"] not in refs:
+        refs.insert(0, comb_draft["id"])
+    if mask_mat["id"] not in refs:
+        refs.append(mask_mat["id"])
+    top_seg["extra_material_refs"] = refs
+
+    top_track["segments"] = [top_seg]
+
+    for k in ["duration", "tm_duration", "max_duration", "draft_duration"]:
+        if isinstance(draft.get(k), (int, float)):
+            draft[k] = int(total_duration_us)
+
+    return {"updated": 1, "bg_added": int(bg_added)}
