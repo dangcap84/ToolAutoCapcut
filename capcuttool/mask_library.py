@@ -267,7 +267,18 @@ def _extract_favorite_media_ids_from_key_value(data: dict[str, Any]) -> dict[str
         is_favorite = bool(v.get("is_favorite") is True)
         third = str(v.get("materialThirdcategory") or "").strip().lower()
         third_id = str(v.get("materialThirdcategoryId") or "").strip()
-        is_favorite_bucket = ("yêu thích" in third) or (third_id == "100000")
+
+        # CapCut dùng nhiều marker favorite khác nhau theo version/account:
+        # - materialThirdcategoryId: 100000 hoặc -100
+        # - materialThirdcategory text có thể bị mojibake nên chỉ fuzzy theo từ khóa
+        third_hint = third.replace("_", " ").replace("-", " ")
+        is_favorite_bucket = (
+            third_id in {"100000", "-100"}
+            or ("yêu thích" in third_hint)
+            or ("yeu thich" in third_hint)
+            or ("favorite" in third_hint)
+            or ("fav" in third_hint)
+        )
 
         if not (is_favorite or is_favorite_bucket):
             continue
@@ -287,8 +298,8 @@ def _extract_favorite_material_ids_from_text_blob(text: str) -> set[str]:
         r'\\"materialId\\"\s*:\s*\\"([0-9A-Za-z_-]{8,})\\"[^\n\r]{0,260}?\\"is_favorite\\"\s*:\s*true',
         r'\\"is_favorite\\"\s*:\s*true[^\n\r]{0,260}?\\"materialId\\"\s*:\s*\\"([0-9A-Za-z_-]{8,})\\"',
         # Favorite bucket marker
-        r'"materialId"\s*:\s*"([0-9A-Za-z_-]{8,})"[^\n\r]{0,260}?"materialThirdcategoryId"\s*:\s*"100000"',
-        r'"materialThirdcategoryId"\s*:\s*"100000"[^\n\r]{0,260}?"materialId"\s*:\s*"([0-9A-Za-z_-]{8,})"',
+        r'"materialId"\s*:\s*"([0-9A-Za-z_-]{8,})"[^\n\r]{0,260}?"materialThirdcategoryId"\s*:\s*"(?:100000|-100)"',
+        r'"materialThirdcategoryId"\s*:\s*"(?:100000|-100)"[^\n\r]{0,260}?"materialId"\s*:\s*"([0-9A-Za-z_-]{8,})"',
     ]
 
     for pat in patterns:
