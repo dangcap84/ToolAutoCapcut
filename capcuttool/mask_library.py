@@ -198,9 +198,14 @@ def seed_mask_background_cache(cache_root: Path | None = None) -> int:
     return copied
 
 
-def _library_from_paths(paths: list[Path], source: str) -> list[dict[str, Any]]:
+def _library_from_paths(
+    paths: list[Path],
+    source: str,
+    display_name_by_basename: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
+    name_map = display_name_by_basename or {}
 
     # Ưu tiên file mới hơn để user thấy asset vừa tải về trước.
     paths = sorted(paths, key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
@@ -212,9 +217,12 @@ def _library_from_paths(paths: list[Path], source: str) -> list[dict[str, Any]]:
         if key in seen:
             continue
         seen.add(key)
+
+        display_name = name_map.get(p.name.lower(), "").strip()
         out.append(
             {
                 "name": p.name,
+                "display_name": display_name,
                 "path": str(p).replace("\\", "/"),
                 "source": source,
                 "raw_name": p.name,
@@ -368,6 +376,68 @@ def _collect_global_favorite_material_ids(user_data_root: Path = DEFAULT_CAPCUT_
     return out
 
 
+def _collect_online_material_display_name_map(projects_root: Path = DEFAULT_CAPCUT_PROJECTS_ROOT) -> dict[str, str]:
+    """
+    Map filename hash trong onlineMaterial -> tên dễ đọc từ metadata project.
+    Ưu tiên material_name, fallback materialName trong key_value.
+    """
+    out: dict[str, str] = {}
+    project_dirs = _iter_capcut_project_dirs(projects_root)
+    if not project_dirs:
+        return out
+
+    for proj in project_dirs:
+        key_value_path = proj / "key_value.json"
+        draft_content_path = proj / "draft_content.json"
+        if not key_value_path.exists() or not draft_content_path.exists():
+            continue
+
+        key_data = _safe_load_json(key_value_path)
+        key_name_by_mid: dict[str, str] = {}
+        if isinstance(key_data, dict):
+            for _, v in key_data.items():
+                if not isinstance(v, dict):
+                    continue
+                mid = str(v.get("materialId") or "").strip()
+                mname = str(v.get("materialName") or "").strip()
+                if mid and mname and mid not in key_name_by_mid:
+                    key_name_by_mid[mid] = mname
+
+        draft_data = _safe_load_json(draft_content_path)
+        if not isinstance(draft_data, dict):
+            continue
+
+        videos = ((draft_data.get("materials") or {}).get("videos") or [])
+        if not isinstance(videos, list):
+            continue
+
+        for item in videos:
+            if not isinstance(item, dict):
+                continue
+
+            raw_path = str(item.get("path") or item.get("media_path") or "").strip()
+            if not raw_path or "onlinematerial" not in raw_path.lower():
+                continue
+
+            p = Path(raw_path)
+            if p.suffix.lower() not in _MASK_VIDEO_EXTS:
+                continue
+
+            base_key = p.name.lower()
+            if base_key in out:
+                continue
+
+            material_id = str(item.get("material_id") or "").strip()
+            material_name = str(item.get("material_name") or "").strip()
+            if not material_name and material_id:
+                material_name = key_name_by_mid.get(material_id, "").strip()
+
+            if material_name:
+                out[base_key] = material_name
+
+    return out
+
+
 def _collect_favorite_background_items_from_projects(projects_root: Path = DEFAULT_CAPCUT_PROJECTS_ROOT, global_favorite_ids: set[str] | None = None) -> list[dict[str, Any]]:
     """
     Tìm đúng thuộc tính favorite trong CapCut project data rồi map ra file background video thật.
@@ -471,4 +541,9 @@ def load_mask_background_library(cache_root: Path | None = None) -> list[dict[st
         return favorite_items
 
     online_videos = _iter_video_files_recursive(DEFAULT_ONLINE_MATERIAL_ROOT, max_items=4000)
-    return _library_from_paths(online_videos, source="onlineMaterial")
+    name_map = _collect_online_material_display_name_map()
+    return _library_from_paths(
+        online_videos,
+        source="onlineMaterial",
+        display_name_by_basename=name_map,
+    )
