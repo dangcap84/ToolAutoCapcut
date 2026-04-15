@@ -35,6 +35,7 @@ from transition_tools import (
 )
 from keyframe_tools import apply_zoom_keyframes_to_draft
 from mask_tools import apply_mask_to_draft
+from mask_library import load_mask_background_library, seed_mask_background_cache
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CAPCUT_PROJECT_ROOT = Path(
@@ -64,7 +65,6 @@ SUBTEXT = "#94a3b8"
 TRANSITION_CATALOG_LIMIT = 50
 BULK_ACTION_WARNING_THRESHOLD = 5
 MASK_BACKGROUND_CATALOG_PATH = BASE_DIR / "mask_background_catalog.json"
-MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 
 
 class CapCutGui:
@@ -243,6 +243,9 @@ class CapCutGui:
         if seeded > 0:
             self._append_log(f"[TRANSITION] seeded_effect_cache_from_pack={seeded}\n")
         self._load_transition_catalog_to_input(show_message=False)
+        seeded_mask_bg = seed_mask_background_cache()
+        if seeded_mask_bg > 0:
+            self._append_log(f"[MASK] seeded_background_pack={seeded_mask_bg}\n")
         self._load_mask_library_to_input(show_message=False)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -1496,45 +1499,14 @@ class CapCutGui:
             for child in self.mask_library_container.winfo_children():
                 child.destroy()
 
-        template_project = DEFAULT_CAPCUT_PROJECT_ROOT / MASK_TEMPLATE_PROJECT_NAME
-        draft_path = template_project / "draft_content.json"
-        if not draft_path.exists():
+        candidates = load_mask_background_library()
+        if not candidates:
             if show_message:
-                messagebox.showwarning("Mask library", f"Không thấy project mẫu '{MASK_TEMPLATE_PROJECT_NAME}'.")
+                messagebox.showwarning(
+                    "Mask library",
+                    "Không có background pack trong tool. Hãy build kèm mask_background_pack.",
+                )
             return
-
-        try:
-            draft = json.loads(draft_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            if show_message:
-                messagebox.showerror("Mask library", f"Đọc draft mẫu lỗi: {exc}")
-            return
-
-        materials = draft.get("materials")
-        videos = (materials or {}).get("videos") if isinstance(materials, dict) else None
-        if not isinstance(videos, list):
-            if show_message:
-                messagebox.showwarning("Mask library", "Draft mẫu không có materials.videos")
-            return
-
-        candidates: list[dict] = []
-        seen_paths: set[str] = set()
-        for v in videos:
-            if not isinstance(v, dict):
-                continue
-            p = str(v.get("path") or "").strip()
-            if not p:
-                continue
-            low = p.lower()
-            if low in seen_paths:
-                continue
-            seen_paths.add(low)
-            name = str(v.get("material_name") or Path(p).name or "background")
-            candidates.append({"name": name, "path": p})
-
-        # ưu tiên 2 video cuối cùng trong test-mask (mẫu user vừa thêm)
-        if len(candidates) > 2:
-            candidates = candidates[-2:]
 
         self.mask_library_catalog = candidates
 
@@ -1551,7 +1523,7 @@ class CapCutGui:
                 cb.grid(row=idx, column=0, sticky="w", padx=(0, 8), pady=(0, 2))
                 self.mask_library_check_vars.append(v)
 
-        self._append_log(f"[MASK] library_loaded={len(candidates)} from={draft_path}\n")
+        self._append_log(f"[MASK] library_loaded={len(candidates)} (embedded pack)\n")
 
     def _on_refresh_mask_library(self) -> None:
         self._load_mask_library_to_input(show_message=True)
