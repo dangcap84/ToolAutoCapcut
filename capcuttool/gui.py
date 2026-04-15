@@ -71,7 +71,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.12")
+        self.root.title("CapCut Sync v3.9.13")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -1504,7 +1504,7 @@ class CapCutGui:
 
         if self.mask_library_container is not None:
             for idx, item in enumerate(candidates):
-                v = tk.BooleanVar(value=False)
+                v = tk.BooleanVar(value=True)
                 label = f"{item['name']} — {item['path']}"
                 cb = ttk.Checkbutton(
                     self.mask_library_container,
@@ -1549,6 +1549,12 @@ class CapCutGui:
 
         manual_paths = self._parse_background_paths(self.mask_backgrounds_var.get())
         selected_library_paths = self._get_selected_mask_library_paths()
+
+        if not selected_library_paths and not manual_paths:
+            # fallback an toàn: nếu user chưa tick gì, tự dùng toàn bộ background embedded
+            selected_library_paths = [str(x.get("path") or "").strip() for x in self.mask_library_catalog if str(x.get("path") or "").strip()]
+            if selected_library_paths:
+                self._append_log(f"[MASK] no background selected -> auto_use_embedded={len(selected_library_paths)}\n")
 
         bg_paths: list[str] = []
         seen: set[str] = set()
