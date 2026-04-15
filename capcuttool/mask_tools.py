@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 _VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 
 
 def _new_id() -> str:
@@ -182,11 +183,17 @@ def _ensure_material_list(materials: dict[str, Any], key: str) -> list[dict[str,
 def _is_video_material(mat: dict[str, Any]) -> bool:
     if not isinstance(mat, dict):
         return False
-    mtype = str(mat.get("type") or "").lower()
-    if mtype == "video":
-        return True
+
     path = str(mat.get("path") or "")
-    return Path(path).suffix.lower() in _VIDEO_EXTS
+    ext = Path(path).suffix.lower()
+    if ext in _IMAGE_EXTS:
+        return False
+    if ext in _VIDEO_EXTS:
+        return True
+
+    mtype = str(mat.get("type") or "").lower()
+    # fallback: path không có ext rõ ràng thì mới dựa vào type
+    return mtype == "video"
 
 
 def _pick_video_material_template(
