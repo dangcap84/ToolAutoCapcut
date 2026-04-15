@@ -9,6 +9,13 @@ from typing import Any
 DEFAULT_MASK_BG_CACHE_ROOT = Path(
     "C:/Users/Admin/AppData/Local/CapCut/User Data/Cache/mask_background_pack"
 )
+DEFAULT_ONLINE_MATERIAL_ROOT = Path(
+    "C:/Users/Admin/AppData/Local/CapCut/User Data/Cache/onlineMaterial"
+)
+ONLINE_MATERIAL_ALIAS_NAMES = [
+    "daf89cec03e1d2c4cbbd24050a9287fd.mp4",
+    "5f7c5949617cf594f28e69e968a64bc8.mp4",
+]
 
 DEFAULT_MASK_BG_PACK_ROOT = Path(__file__).resolve().parent / "mask_background_pack"
 DEFAULT_MASK_BG_PACK_ZIP = Path(__file__).resolve().parent / "mask_background_pack.zip"
@@ -144,11 +151,41 @@ def seed_mask_background_cache_from_zip(
     return copied
 
 
+def _seed_online_material_alias(cache_root: Path | None = None) -> int:
+    if cache_root is None:
+        cache_root = DEFAULT_MASK_BG_CACHE_ROOT
+
+    src_files = _iter_video_files(cache_root)
+    if not src_files:
+        return 0
+
+    try:
+        DEFAULT_ONLINE_MATERIAL_ROOT.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return 0
+
+    copied = 0
+    for idx, alias in enumerate(ONLINE_MATERIAL_ALIAS_NAMES):
+        if idx >= len(src_files):
+            break
+        src = src_files[idx]
+        dst = DEFAULT_ONLINE_MATERIAL_ROOT / alias
+        if dst.exists() and dst.stat().st_size > 0:
+            continue
+        try:
+            shutil.copy2(src, dst)
+            copied += 1
+        except Exception:
+            continue
+    return copied
+
+
 def seed_mask_background_cache(cache_root: Path | None = None) -> int:
     copied = 0
     for z in _candidate_pack_zips():
         copied += seed_mask_background_cache_from_zip(z, cache_root=cache_root)
     copied += seed_mask_background_cache_from_pack(cache_root=cache_root)
+    copied += _seed_online_material_alias(cache_root=cache_root)
     return copied
 
 
@@ -159,6 +196,20 @@ def load_mask_background_library(cache_root: Path | None = None) -> list[dict[st
     seed_mask_background_cache(cache_root=cache_root)
 
     out: list[dict[str, Any]] = []
+
+    for alias in ONLINE_MATERIAL_ALIAS_NAMES:
+        p = DEFAULT_ONLINE_MATERIAL_ROOT / alias
+        if p.exists() and p.is_file():
+            out.append(
+                {
+                    "name": alias,
+                    "path": str(p).replace("\\", "/"),
+                }
+            )
+
+    if out:
+        return out
+
     for p in _iter_video_files(cache_root):
         out.append(
             {
