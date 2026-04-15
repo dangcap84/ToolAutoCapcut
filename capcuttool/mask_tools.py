@@ -369,14 +369,26 @@ def apply_mask_to_draft(
 
         bg_ids: list[str] = []
         for p in bg_paths:
+            norm_p = str(Path(p)).replace("\\", "/")
             vm = _clone(vm_template)
             vm["id"] = _new_id()
             vm["type"] = "video"
-            vm["path"] = p
-            vm["material_name"] = Path(p).name
+            vm["path"] = norm_p
+            vm["media_path"] = norm_p
+            vm["material_name"] = Path(norm_p).name
             vm["duration"] = int(total_duration_us)
             vm["extra_type_option"] = int(vm.get("extra_type_option") or 0)
             vm["has_audio"] = bool(vm.get("has_audio") or False)
+
+            # tránh giữ metadata ràng buộc vào source video cũ
+            vm["material_id"] = ""
+            vm["origin_material_id"] = ""
+            vm["local_material_id"] = ""
+            vm["local_id"] = ""
+            vm["reverse_path"] = ""
+            vm["intensifies_path"] = ""
+            vm["reverse_intensifies_path"] = ""
+
             videos.append(vm)
             bg_ids.append(vm["id"])
 
