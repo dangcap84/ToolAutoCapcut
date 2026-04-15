@@ -4,6 +4,7 @@ import os
 import shutil
 import sys
 import zipfile
+import json
 from pathlib import Path
 from typing import Any
 
@@ -33,9 +34,9 @@ DEFAULT_ONLINE_MATERIAL_ROOT = DEFAULT_CAPCUT_CACHE_ROOT / "onlineMaterial"
 
 DEFAULT_MASK_BG_PACK_ROOT = Path(__file__).resolve().parent / "mask_background_pack"
 DEFAULT_MASK_BG_PACK_ZIP = Path(__file__).resolve().parent / "mask_background_pack.zip"
+DEFAULT_CAPCUT_PROJECTS_ROOT = _user_home_dir() / "AppData" / "Local" / "CapCut" / "User Data" / "Projects" / "com.lveditor.draft"
 
 _MASK_VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
-
 
 
 def _candidate_pack_roots() -> list[Path]:
@@ -221,18 +222,152 @@ def _library_from_paths(paths: list[Path], source: str) -> list[dict[str, Any]]:
     return out
 
 
+def _safe_load_json(path: Path) -> dict[str, Any] | list[Any] | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _iter_capcut_project_dirs(root: Path = DEFAULT_CAPCUT_PROJECTS_ROOT) -> list[Path]:
+    if not root.exists() or not root.is_dir():
+        return []
+
+    out: list[Path] = []
+    for child in root.iterdir():
+        if not child.is_dir():
+            continue
+        name = child.name.lower()
+        if name.startswith(".") or name == ".recycle_bin":
+            continue
+        out.append(child)
+
+    # project vừa chỉnh gần nhất lên trước
+    out.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+    return out
+
+
+def _extract_favorite_media_ids_from_key_value(data: dict[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for _, v in data.items():
+        if not isinstance(v, dict):
+            continue
+
+        material_id = str(v.get("materialId") or "").strip()
+        if not material_id:
+            continue
+
+        # chỉ lấy media background/video, bỏ audio/text favorite
+        material_category = str(v.get("materialCategory") or "").strip().lower()
+        if material_category and material_category != "media":
+            continue
+
+        is_favorite = bool(v.get("is_favorite") is True)
+        third = str(v.get("materialThirdcategory") or "").strip().lower()
+        third_id = str(v.get("materialThirdcategoryId") or "").strip()
+        is_favorite_bucket = ("yêu thích" in third) or (third_id == "100000")
+
+        if not (is_favorite or is_favorite_bucket):
+            continue
+
+        out[material_id] = str(v.get("materialName") or material_id)
+    return out
+
+
+def _collect_favorite_background_items_from_projects(projects_root: Path = DEFAULT_CAPCUT_PROJECTS_ROOT) -> list[dict[str, Any]]:
+    """
+    Tìm đúng thuộc tính favorite trong CapCut project data rồi map ra file background video thật.
+
+    Luồng map:
+    - key_value.json -> lấy materialId có is_favorite=true hoặc thuộc bucket "Yêu thích".
+    - draft_content.json -> tìm material/video có material_id đó và path nằm trong onlineMaterial.
+    """
+    project_dirs = _iter_capcut_project_dirs(projects_root)
+    if not project_dirs:
+        return []
+
+    seen_path: set[str] = set()
+    out: list[dict[str, Any]] = []
+
+    for proj in project_dirs:
+        key_value_path = proj / "key_value.json"
+        draft_content_path = proj / "draft_content.json"
+        if not key_value_path.exists() or not draft_content_path.exists():
+            continue
+
+        key_data = _safe_load_json(key_value_path)
+        if not isinstance(key_data, dict):
+            continue
+
+        fav_ids = _extract_favorite_media_ids_from_key_value(key_data)
+        if not fav_ids:
+            continue
+
+        draft_data = _safe_load_json(draft_content_path)
+        if not isinstance(draft_data, dict):
+            continue
+
+        materials = draft_data.get("materials")
+        if not isinstance(materials, dict):
+            continue
+
+        videos = materials.get("videos")
+        if not isinstance(videos, list):
+            continue
+
+        for item in videos:
+            if not isinstance(item, dict):
+                continue
+
+            material_id = str(item.get("material_id") or "").strip()
+            if not material_id or material_id not in fav_ids:
+                continue
+
+            raw_path = str(item.get("path") or item.get("media_path") or "").strip()
+            if not raw_path:
+                continue
+
+            if "onlinematerial" not in raw_path.lower():
+                continue
+
+            path_obj = Path(raw_path)
+            if path_obj.suffix.lower() not in _MASK_VIDEO_EXTS:
+                continue
+
+            path_norm = str(path_obj).replace("\\", "/")
+            key = path_norm.lower()
+            if key in seen_path:
+                continue
+            seen_path.add(key)
+
+            display_name = str(item.get("material_name") or fav_ids.get(material_id) or path_obj.name)
+            out.append(
+                {
+                    "name": path_obj.name,
+                    "display_name": display_name,
+                    "path": path_norm,
+                    "source": "favorite",
+                    "raw_name": path_obj.name,
+                }
+            )
+
+    return out
+
+
 def load_mask_background_library(cache_root: Path | None = None) -> list[dict[str, Any]]:
     """
-    Load động toàn bộ background video hiện có trong CapCut cache (onlineMaterial).
-
-    Không khóa cứng theo alias để khi user thêm favorite/background mới thì bấm
-    refresh hoặc mở lại tool sẽ thấy ngay trong danh sách.
+    Ưu tiên lọc theo thuộc tính Favorite từ chính dữ liệu CapCut.
+    Nếu chưa map được favorite -> fallback toàn bộ onlineMaterial.
     """
     if cache_root is None:
         cache_root = DEFAULT_MASK_BG_CACHE_ROOT
 
     # vẫn seed pack vào cache để backward-compatible, nhưng KHÔNG đưa vào library mặc định
     seed_mask_background_cache(cache_root=cache_root)
+
+    favorite_items = _collect_favorite_background_items_from_projects()
+    if favorite_items:
+        return favorite_items
 
     online_videos = _iter_video_files_recursive(DEFAULT_ONLINE_MATERIAL_ROOT, max_items=4000)
     return _library_from_paths(online_videos, source="onlineMaterial")
