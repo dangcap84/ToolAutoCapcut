@@ -65,12 +65,13 @@ SUBTEXT = "#94a3b8"
 TRANSITION_CATALOG_LIMIT = 50
 BULK_ACTION_WARNING_THRESHOLD = 5
 MASK_BACKGROUND_CATALOG_PATH = BASE_DIR / "mask_background_catalog.json"
+MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 
 
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.11")
+        self.root.title("CapCut Sync v3.9.12")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -1607,8 +1608,17 @@ class CapCutGui:
         output_buf = io.StringIO()
         overall_code = 0
 
+        mask_template_draft: dict | None = None
+        try:
+            template_path = DEFAULT_CAPCUT_PROJECT_ROOT / MASK_TEMPLATE_PROJECT_NAME / "draft_content.json"
+            if template_path.exists():
+                mask_template_draft = json.loads(template_path.read_text(encoding="utf-8"))
+        except Exception:
+            mask_template_draft = None
+
         try:
             with contextlib.redirect_stdout(output_buf):
+                print(f"mask_template={'external' if mask_template_draft else 'project_fallback'}")
                 for idx, project in enumerate(projects, start=1):
                     project_dir = Path(project)
                     print(f"--- mask project {idx}/{len(projects)}: {project_dir} ---")
@@ -1616,12 +1626,14 @@ class CapCutGui:
                     print(f"background_inputs={len(bg_paths)}")
 
                     bundle = load_project(project_dir)
+                    template_for_apply = mask_template_draft if isinstance(mask_template_draft, dict) else bundle.main_draft
+
                     result_main = apply_mask_to_draft(
                         bundle.main_draft,
                         overlay_width=overlay_w,
                         overlay_height=overlay_h,
                         background_paths=bg_paths,
-                        template_draft=bundle.main_draft,
+                        template_draft=template_for_apply,
                         background_catalog_path=MASK_BACKGROUND_CATALOG_PATH,
                     )
                     write_json_atomic(bundle.main_draft_path, bundle.main_draft)
@@ -1634,7 +1646,7 @@ class CapCutGui:
                             overlay_width=overlay_w,
                             overlay_height=overlay_h,
                             background_paths=bg_paths,
-                            template_draft=bundle.main_draft,
+                            template_draft=template_for_apply,
                             background_catalog_path=MASK_BACKGROUND_CATALOG_PATH,
                         )
                         write_json_atomic(tp, d)
