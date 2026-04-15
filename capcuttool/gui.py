@@ -1507,7 +1507,8 @@ class CapCutGui:
                 v = tk.BooleanVar(value=True)
                 src = str(item.get("source") or "")
                 prefix = f"[{src}] " if src else ""
-                label = f"{prefix}{item['name']} — {item['path']}"
+                # UI ưu tiên tên dễ đọc, ẩn hash/path để user chọn theo tên background.
+                label = f"{prefix}{item['name']}"
                 cb = ttk.Checkbutton(
                     self.mask_library_container,
                     text=label,
@@ -1517,7 +1518,7 @@ class CapCutGui:
                 cb.grid(row=idx, column=0, sticky="w", padx=(0, 8), pady=(0, 2))
                 self.mask_library_check_vars.append(v)
 
-        self._append_log(f"[MASK] library_loaded={len(candidates)} (embedded pack)\n")
+        self._append_log(f"[MASK] library_loaded={len(candidates)} (favorite/name mode)\n")
 
     def _on_refresh_mask_library(self) -> None:
         self._load_mask_library_to_input(show_message=True)
@@ -1553,10 +1554,10 @@ class CapCutGui:
         selected_library_paths = self._get_selected_mask_library_paths()
 
         if not selected_library_paths and not manual_paths:
-            # fallback an toàn: nếu user chưa tick gì, tự dùng toàn bộ background embedded
+            # fallback an toàn: nếu user chưa tick gì, tự dùng toàn bộ background trong library hiện tại
             selected_library_paths = [str(x.get("path") or "").strip() for x in self.mask_library_catalog if str(x.get("path") or "").strip()]
             if selected_library_paths:
-                self._append_log(f"[MASK] no background selected -> auto_use_embedded={len(selected_library_paths)}\n")
+                self._append_log(f"[MASK] no background selected -> auto_use_library={len(selected_library_paths)}\n")
 
         bg_paths: list[str] = []
         seen: set[str] = set()

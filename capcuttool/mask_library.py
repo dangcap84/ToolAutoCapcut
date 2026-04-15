@@ -36,6 +36,13 @@ DEFAULT_MASK_BG_PACK_ZIP = Path(__file__).resolve().parent / "mask_background_pa
 
 _MASK_VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 
+# 2 background gốc của tool (được user add vào Favorite trong CapCut).
+# Khi thấy trong onlineMaterial, ưu tiên show đúng tên dễ đọc thay vì id/hash filename.
+_BUILTIN_BG_ALIAS_TO_NAME: dict[str, str] = {
+    "daf89cec03e1d2c4cbbd24050a9287fd.mp4": "Background 01",
+    "5f7c5949617cf594f28e69e968a64bc8.mp4": "Background 02",
+}
+
 
 def _candidate_pack_roots() -> list[Path]:
     roots: list[Path] = [DEFAULT_MASK_BG_PACK_ROOT]
@@ -208,11 +215,16 @@ def _library_from_paths(paths: list[Path], source: str) -> list[dict[str, Any]]:
         if key in seen:
             continue
         seen.add(key)
+        display_name = p.name
+        if source == "onlineMaterial":
+            display_name = _BUILTIN_BG_ALIAS_TO_NAME.get(p.name.lower(), p.name)
+
         out.append(
             {
-                "name": p.name,
+                "name": display_name,
                 "path": str(p).replace("\\", "/"),
                 "source": source,
+                "raw_name": p.name,
             }
         )
 
@@ -221,10 +233,12 @@ def _library_from_paths(paths: list[Path], source: str) -> list[dict[str, Any]]:
 
 def load_mask_background_library(cache_root: Path | None = None) -> list[dict[str, Any]]:
     """
-    Ưu tiên tuyệt đối background từ CapCut user cache (onlineMaterial).
+    Ưu tiên background từ CapCut cache (onlineMaterial).
 
-    Lý do: yêu cầu workflow chỉ dùng các background do user quản lý trong CapCut,
-    không trộn embedded pack để tránh list bị lẫn "ngoài mục yêu thích/tài sản".
+    Với case user chỉ muốn đúng 2 background gốc đã đánh dấu Favorite:
+    - nếu tìm thấy 2 alias built-in trong onlineMaterial -> chỉ trả về 2 item đó
+      và dùng tên dễ đọc (Background 01/02), không hiện id/hash.
+    - nếu không đủ alias -> fallback trả toàn bộ onlineMaterial.
     """
     if cache_root is None:
         cache_root = DEFAULT_MASK_BG_CACHE_ROOT
@@ -233,4 +247,17 @@ def load_mask_background_library(cache_root: Path | None = None) -> list[dict[st
     seed_mask_background_cache(cache_root=cache_root)
 
     online_videos = _iter_video_files_recursive(DEFAULT_ONLINE_MATERIAL_ROOT, max_items=4000)
+    if not online_videos:
+        return []
+
+    by_name = {p.name.lower(): p for p in online_videos}
+    preferred: list[Path] = []
+    for alias in _BUILTIN_BG_ALIAS_TO_NAME.keys():
+        p = by_name.get(alias)
+        if p is not None:
+            preferred.append(p)
+
+    if preferred:
+        return _library_from_paths(preferred, source="onlineMaterial")
+
     return _library_from_paths(online_videos, source="onlineMaterial")
