@@ -1,21 +1,35 @@
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import zipfile
 from pathlib import Path
 from typing import Any
 
-DEFAULT_MASK_BG_CACHE_ROOT = Path(
-    "C:/Users/Admin/AppData/Local/CapCut/User Data/Cache/mask_background_pack"
-)
-DEFAULT_ONLINE_MATERIAL_ROOT = Path(
-    "C:/Users/Admin/AppData/Local/CapCut/User Data/Cache/onlineMaterial"
-)
-ONLINE_MATERIAL_ALIAS_NAMES = [
-    "daf89cec03e1d2c4cbbd24050a9287fd.mp4",
-    "5f7c5949617cf594f28e69e968a64bc8.mp4",
-]
+
+def _user_home_dir() -> Path:
+    env = os.environ
+    for key in ("USERPROFILE", "HOME"):
+        v = str(env.get(key) or "").strip()
+        if v:
+            return Path(v)
+
+    drive = str(env.get("HOMEDRIVE") or "").strip()
+    hpath = str(env.get("HOMEPATH") or "").strip()
+    if drive and hpath:
+        return Path(f"{drive}{hpath}")
+
+    return Path.home()
+
+
+def _default_capcut_cache_root() -> Path:
+    return _user_home_dir() / "AppData" / "Local" / "CapCut" / "User Data" / "Cache"
+
+
+DEFAULT_CAPCUT_CACHE_ROOT = _default_capcut_cache_root()
+DEFAULT_MASK_BG_CACHE_ROOT = DEFAULT_CAPCUT_CACHE_ROOT / "mask_background_pack"
+DEFAULT_ONLINE_MATERIAL_ROOT = DEFAULT_CAPCUT_CACHE_ROOT / "onlineMaterial"
 
 DEFAULT_MASK_BG_PACK_ROOT = Path(__file__).resolve().parent / "mask_background_pack"
 DEFAULT_MASK_BG_PACK_ZIP = Path(__file__).resolve().parent / "mask_background_pack.zip"
@@ -85,6 +99,27 @@ def _iter_video_files(root: Path) -> list[Path]:
     )
 
 
+def _iter_video_files_recursive(root: Path, max_items: int = 2000) -> list[Path]:
+    if not root.exists() or not root.is_dir():
+        return []
+
+    out: list[Path] = []
+    try:
+        for p in root.rglob("*"):
+            if not p.is_file():
+                continue
+            if p.suffix.lower() not in _MASK_VIDEO_EXTS:
+                continue
+            out.append(p)
+            if len(out) >= max_items:
+                break
+    except Exception:
+        return []
+
+    out.sort(key=lambda p: p.name.lower())
+    return out
+
+
 def seed_mask_background_cache_from_pack(
     cache_root: Path | None = None,
 ) -> int:
@@ -151,42 +186,37 @@ def seed_mask_background_cache_from_zip(
     return copied
 
 
-def _seed_online_material_alias(cache_root: Path | None = None) -> int:
-    if cache_root is None:
-        cache_root = DEFAULT_MASK_BG_CACHE_ROOT
-
-    src_files = _iter_video_files(cache_root)
-    if not src_files:
-        return 0
-
-    try:
-        DEFAULT_ONLINE_MATERIAL_ROOT.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        return 0
-
-    copied = 0
-    for idx, alias in enumerate(ONLINE_MATERIAL_ALIAS_NAMES):
-        if idx >= len(src_files):
-            break
-        src = src_files[idx]
-        dst = DEFAULT_ONLINE_MATERIAL_ROOT / alias
-        if dst.exists() and dst.stat().st_size > 0:
-            continue
-        try:
-            shutil.copy2(src, dst)
-            copied += 1
-        except Exception:
-            continue
-    return copied
-
-
 def seed_mask_background_cache(cache_root: Path | None = None) -> int:
     copied = 0
     for z in _candidate_pack_zips():
         copied += seed_mask_background_cache_from_zip(z, cache_root=cache_root)
     copied += seed_mask_background_cache_from_pack(cache_root=cache_root)
-    copied += _seed_online_material_alias(cache_root=cache_root)
     return copied
+
+
+def _library_from_paths(paths: list[Path], source: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    # Ưu tiên file mới hơn để user thấy asset vừa tải về trước.
+    paths = sorted(paths, key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+
+    for p in paths:
+        if not p.exists() or not p.is_file():
+            continue
+        key = str(p).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "name": p.name,
+                "path": str(p).replace("\\", "/"),
+                "source": source,
+            }
+        )
+
+    return out
 
 
 def load_mask_background_library(cache_root: Path | None = None) -> list[dict[str, Any]]:
@@ -195,26 +225,19 @@ def load_mask_background_library(cache_root: Path | None = None) -> list[dict[st
 
     seed_mask_background_cache(cache_root=cache_root)
 
+    online_videos = _iter_video_files_recursive(DEFAULT_ONLINE_MATERIAL_ROOT, max_items=4000)
+    packed_videos = _iter_video_files(cache_root)
+
     out: list[dict[str, Any]] = []
+    out.extend(_library_from_paths(online_videos, source="onlineMaterial"))
 
-    for alias in ONLINE_MATERIAL_ALIAS_NAMES:
-        p = DEFAULT_ONLINE_MATERIAL_ROOT / alias
-        if p.exists() and p.is_file():
-            out.append(
-                {
-                    "name": alias,
-                    "path": str(p).replace("\\", "/"),
-                }
-            )
+    # fallback/backup source từ pack embedded
+    existing = {str(x.get("path") or "").lower() for x in out}
+    for item in _library_from_paths(packed_videos, source="embeddedPack"):
+        p = str(item.get("path") or "").lower()
+        if p in existing:
+            continue
+        existing.add(p)
+        out.append(item)
 
-    if out:
-        return out
-
-    for p in _iter_video_files(cache_root):
-        out.append(
-            {
-                "name": p.name,
-                "path": str(p).replace("\\", "/"),
-            }
-        )
     return out

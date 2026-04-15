@@ -71,7 +71,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.16")
+        self.root.title("CapCut Sync v3.9.17")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -1505,7 +1505,9 @@ class CapCutGui:
         if self.mask_library_container is not None:
             for idx, item in enumerate(candidates):
                 v = tk.BooleanVar(value=True)
-                label = f"{item['name']} — {item['path']}"
+                src = str(item.get("source") or "")
+                prefix = f"[{src}] " if src else ""
+                label = f"{prefix}{item['name']} — {item['path']}"
                 cb = ttk.Checkbutton(
                     self.mask_library_container,
                     text=label,
