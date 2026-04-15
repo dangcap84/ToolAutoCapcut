@@ -5,6 +5,7 @@ import shutil
 import sys
 import zipfile
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -29,12 +30,13 @@ def _default_capcut_cache_root() -> Path:
 
 
 DEFAULT_CAPCUT_CACHE_ROOT = _default_capcut_cache_root()
+DEFAULT_CAPCUT_USER_DATA_ROOT = _user_home_dir() / "AppData" / "Local" / "CapCut" / "User Data"
 DEFAULT_MASK_BG_CACHE_ROOT = DEFAULT_CAPCUT_CACHE_ROOT / "mask_background_pack"
 DEFAULT_ONLINE_MATERIAL_ROOT = DEFAULT_CAPCUT_CACHE_ROOT / "onlineMaterial"
 
 DEFAULT_MASK_BG_PACK_ROOT = Path(__file__).resolve().parent / "mask_background_pack"
 DEFAULT_MASK_BG_PACK_ZIP = Path(__file__).resolve().parent / "mask_background_pack.zip"
-DEFAULT_CAPCUT_PROJECTS_ROOT = _user_home_dir() / "AppData" / "Local" / "CapCut" / "User Data" / "Projects" / "com.lveditor.draft"
+DEFAULT_CAPCUT_PROJECTS_ROOT = DEFAULT_CAPCUT_USER_DATA_ROOT / "Projects" / "com.lveditor.draft"
 
 _MASK_VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 
@@ -274,7 +276,88 @@ def _extract_favorite_media_ids_from_key_value(data: dict[str, Any]) -> dict[str
     return out
 
 
-def _collect_favorite_background_items_from_projects(projects_root: Path = DEFAULT_CAPCUT_PROJECTS_ROOT) -> list[dict[str, Any]]:
+def _extract_favorite_material_ids_from_text_blob(text: str) -> set[str]:
+    out: set[str] = set()
+
+    patterns = [
+        # JSON thường
+        r'"materialId"\s*:\s*"([0-9A-Za-z_-]{8,})"[^\n\r]{0,240}?"is_favorite"\s*:\s*true',
+        r'"is_favorite"\s*:\s*true[^\n\r]{0,240}?"materialId"\s*:\s*"([0-9A-Za-z_-]{8,})"',
+        # JSON bị escape trong LevelDB value
+        r'\\"materialId\\"\s*:\s*\\"([0-9A-Za-z_-]{8,})\\"[^\n\r]{0,260}?\\"is_favorite\\"\s*:\s*true',
+        r'\\"is_favorite\\"\s*:\s*true[^\n\r]{0,260}?\\"materialId\\"\s*:\s*\\"([0-9A-Za-z_-]{8,})\\"',
+        # Favorite bucket marker
+        r'"materialId"\s*:\s*"([0-9A-Za-z_-]{8,})"[^\n\r]{0,260}?"materialThirdcategoryId"\s*:\s*"100000"',
+        r'"materialThirdcategoryId"\s*:\s*"100000"[^\n\r]{0,260}?"materialId"\s*:\s*"([0-9A-Za-z_-]{8,})"',
+    ]
+
+    for pat in patterns:
+        try:
+            for m in re.finditer(pat, text, flags=re.IGNORECASE):
+                mid = (m.group(1) or "").strip()
+                if mid:
+                    out.add(mid)
+        except Exception:
+            continue
+
+    return out
+
+
+def _read_text_best_effort(path: Path, max_bytes: int = 8 * 1024 * 1024) -> str:
+    try:
+        data = path.read_bytes()
+        if len(data) > max_bytes:
+            data = data[:max_bytes]
+        return data.decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+
+def _collect_global_favorite_material_ids(user_data_root: Path = DEFAULT_CAPCUT_USER_DATA_ROOT) -> set[str]:
+    """
+    Thu favorite từ kho dữ liệu chung của CapCut (không phụ thuộc project cụ thể).
+    """
+    roots = [
+        user_data_root / "Cache" / "onlineMaterial",
+        user_data_root / "Cache" / "ressdk_db",
+        user_data_root / "CEF" / "Local Storage" / "leveldb",
+        user_data_root / "CEF" / "IndexedDB",
+        user_data_root / "Projects" / "com.lveditor.draft",
+    ]
+
+    file_suffixes = {".json", ".log", ".txt", ".ldb", ".sst", ".bin"}
+    out: set[str] = set()
+
+    for root in roots:
+        if not root.exists() or not root.is_dir():
+            continue
+
+        seen = 0
+        try:
+            for p in root.rglob("*"):
+                if not p.is_file():
+                    continue
+                if p.suffix.lower() not in file_suffixes:
+                    continue
+
+                blob = _read_text_best_effort(p)
+                if not blob:
+                    continue
+
+                mids = _extract_favorite_material_ids_from_text_blob(blob)
+                if mids:
+                    out.update(mids)
+
+                seen += 1
+                if seen >= 1200:
+                    break
+        except Exception:
+            continue
+
+    return out
+
+
+def _collect_favorite_background_items_from_projects(projects_root: Path = DEFAULT_CAPCUT_PROJECTS_ROOT, global_favorite_ids: set[str] | None = None) -> list[dict[str, Any]]:
     """
     Tìm đúng thuộc tính favorite trong CapCut project data rồi map ra file background video thật.
 
@@ -289,6 +372,8 @@ def _collect_favorite_background_items_from_projects(projects_root: Path = DEFAU
     seen_path: set[str] = set()
     out: list[dict[str, Any]] = []
 
+    global_ids = set(global_favorite_ids or set())
+
     for proj in project_dirs:
         key_value_path = proj / "key_value.json"
         draft_content_path = proj / "draft_content.json"
@@ -300,7 +385,8 @@ def _collect_favorite_background_items_from_projects(projects_root: Path = DEFAU
             continue
 
         fav_ids = _extract_favorite_media_ids_from_key_value(key_data)
-        if not fav_ids:
+        merged_fav_ids: set[str] = set(fav_ids.keys()) | global_ids
+        if not merged_fav_ids:
             continue
 
         draft_data = _safe_load_json(draft_content_path)
@@ -320,7 +406,7 @@ def _collect_favorite_background_items_from_projects(projects_root: Path = DEFAU
                 continue
 
             material_id = str(item.get("material_id") or "").strip()
-            if not material_id or material_id not in fav_ids:
+            if not material_id or material_id not in merged_fav_ids:
                 continue
 
             raw_path = str(item.get("path") or item.get("media_path") or "").strip()
@@ -341,12 +427,15 @@ def _collect_favorite_background_items_from_projects(projects_root: Path = DEFAU
             seen_path.add(key)
 
             display_name = str(item.get("material_name") or fav_ids.get(material_id) or path_obj.name)
+            source = "favorite"
+            if material_id in global_ids and material_id not in fav_ids:
+                source = "favorite-global"
             out.append(
                 {
                     "name": path_obj.name,
                     "display_name": display_name,
                     "path": path_norm,
-                    "source": "favorite",
+                    "source": source,
                     "raw_name": path_obj.name,
                 }
             )
@@ -365,7 +454,8 @@ def load_mask_background_library(cache_root: Path | None = None) -> list[dict[st
     # vẫn seed pack vào cache để backward-compatible, nhưng KHÔNG đưa vào library mặc định
     seed_mask_background_cache(cache_root=cache_root)
 
-    favorite_items = _collect_favorite_background_items_from_projects()
+    global_fav_ids = _collect_global_favorite_material_ids()
+    favorite_items = _collect_favorite_background_items_from_projects(global_favorite_ids=global_fav_ids)
     if favorite_items:
         return favorite_items
 
