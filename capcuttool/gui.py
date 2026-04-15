@@ -15,6 +15,7 @@ import sys
 import threading
 import traceback
 from datetime import datetime, timezone
+import math
 from pathlib import Path
 import tkinter as tk
 from tkinter import EW, NSEW, filedialog, messagebox, ttk
@@ -71,7 +72,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.34")
+        self.root.title("CapCut Sync v3.9.35")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -190,8 +191,8 @@ class CapCutGui:
         self.batch_voices_root_var = tk.StringVar()
         self.batch_media_root_var = tk.StringVar()
         self.batch_project_name_var = tk.StringVar()
-        self.batch_video_volume_var = tk.StringVar(value="1.0")
-        self.batch_audio_volume_var = tk.StringVar(value="1.0")
+        self.batch_video_volume_db_var = tk.StringVar(value="0.0")
+        self.batch_audio_volume_db_var = tk.StringVar(value="0.0")
         self.template_info_var = tk.StringVar(value="Template cache: chưa lưu")
         self.status_var = tk.StringVar(value="Sẵn sàng · Bấm Làm mới, chọn dự án rồi Đồng bộ")
 
@@ -362,10 +363,11 @@ class CapCutGui:
 
         vol_row = ttk.Frame(batch_card, style="Panel.TFrame")
         vol_row.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(8, 0))
-        ttk.Label(vol_row, text="Âm lượng video:", style="Subtle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Entry(vol_row, textvariable=self.batch_video_volume_var, width=8, style="Search.TEntry").grid(row=0, column=1, sticky="w", padx=(6, 12))
-        ttk.Label(vol_row, text="Âm lượng audio:", style="Subtle.TLabel").grid(row=0, column=2, sticky="w")
-        ttk.Entry(vol_row, textvariable=self.batch_audio_volume_var, width=8, style="Search.TEntry").grid(row=0, column=3, sticky="w", padx=(6, 0))
+        ttk.Label(vol_row, text="Video (dB):", style="Subtle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Entry(vol_row, textvariable=self.batch_video_volume_db_var, width=8, style="Search.TEntry").grid(row=0, column=1, sticky="w", padx=(6, 12))
+        ttk.Label(vol_row, text="Audio (dB):", style="Subtle.TLabel").grid(row=0, column=2, sticky="w")
+        ttk.Entry(vol_row, textvariable=self.batch_audio_volume_db_var, width=8, style="Search.TEntry").grid(row=0, column=3, sticky="w", padx=(6, 6))
+        ttk.Label(vol_row, text="Mặc định 0.0 dB", style="Subtle.TLabel").grid(row=0, column=4, sticky="w")
 
         self.batch_button = ttk.Button(
             batch_card,
@@ -1125,15 +1127,14 @@ class CapCutGui:
         project_name = self.batch_project_name_var.get().strip()
 
         try:
-            video_volume = float(self.batch_video_volume_var.get().strip())
-            audio_volume = float(self.batch_audio_volume_var.get().strip())
+            video_volume_db = float(self.batch_video_volume_db_var.get().strip())
+            audio_volume_db = float(self.batch_audio_volume_db_var.get().strip())
         except ValueError:
-            messagebox.showerror("Input không hợp lệ", "Âm lượng video/audio phải là số.")
+            messagebox.showerror("Input không hợp lệ", "Âm lượng video/audio phải là số dB (ví dụ: 0, -3, 2.5).")
             return
 
-        if video_volume < 0 or audio_volume < 0:
-            messagebox.showerror("Input không hợp lệ", "Âm lượng video/audio phải >= 0.")
-            return
+        video_volume = math.pow(10.0, video_volume_db / 20.0)
+        audio_volume = math.pow(10.0, audio_volume_db / 20.0)
 
         if not voices_root.exists() or not voices_root.is_dir():
             messagebox.showerror("Thiếu thư mục", "Thư mục voice không hợp lệ.")
@@ -1176,7 +1177,9 @@ class CapCutGui:
         self.current_action = "batch_create"
         self._append_log("\n--- Tạo batch project ---\n")
         self._append_log(
-            f"template={template_project}\nvoices_root={voices_root}\nmedia_root={media_root}\nproject_name={project_name or '[auto]'}\nvideo_volume={video_volume}\naudio_volume={audio_volume}\n"
+            f"template={template_project}\nvoices_root={voices_root}\nmedia_root={media_root}\nproject_name={project_name or '[auto]'}\n"
+            f"video_volume_db={video_volume_db} -> linear={video_volume}\n"
+            f"audio_volume_db={audio_volume_db} -> linear={audio_volume}\n"
         )
         self._set_status("Đang tạo project hàng loạt từ template...", "info")
         self._set_running_state(True)
