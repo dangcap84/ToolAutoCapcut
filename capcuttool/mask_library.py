@@ -36,6 +36,7 @@ DEFAULT_ONLINE_MATERIAL_ROOT = DEFAULT_CAPCUT_CACHE_ROOT / "onlineMaterial"
 
 DEFAULT_MASK_BG_PACK_ROOT = Path(__file__).resolve().parent / "mask_background_pack"
 DEFAULT_MASK_BG_PACK_ZIP = Path(__file__).resolve().parent / "mask_background_pack.zip"
+DEFAULT_MASK_BG_CATALOG_PATH = Path(__file__).resolve().parent / "mask_background_catalog.json"
 DEFAULT_CAPCUT_PROJECTS_ROOT = DEFAULT_CAPCUT_USER_DATA_ROOT / "Projects" / "com.lveditor.draft"
 
 _MASK_VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
@@ -237,6 +238,87 @@ def _safe_load_json(path: Path) -> dict[str, Any] | list[Any] | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def _load_mask_background_catalog(catalog_path: Path = DEFAULT_MASK_BG_CATALOG_PATH) -> list[dict[str, Any]]:
+    raw = _safe_load_json(catalog_path)
+    if not isinstance(raw, list):
+        return []
+
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+
+        p = str(item.get("path") or "").strip()
+        if not p:
+            continue
+
+        pp = Path(p)
+        if not pp.exists() or not pp.is_file():
+            continue
+        if pp.suffix.lower() not in _MASK_VIDEO_EXTS:
+            continue
+
+        key = str(pp).replace("\\", "/").lower()
+        if key in seen:
+            continue
+        seen.add(key)
+
+        display_name = str(item.get("display_name") or item.get("name") or pp.name)
+        out.append(
+            {
+                "name": pp.name,
+                "display_name": display_name,
+                "path": str(pp).replace("\\", "/"),
+                "source": "catalog",
+                "raw_name": pp.name,
+            }
+        )
+
+    return out
+
+
+def _save_mask_background_catalog(
+    items: list[dict[str, Any]],
+    catalog_path: Path = DEFAULT_MASK_BG_CATALOG_PATH,
+) -> None:
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        p = str(item.get("path") or "").strip()
+        if not p:
+            continue
+
+        pp = Path(p)
+        if pp.suffix.lower() not in _MASK_VIDEO_EXTS:
+            continue
+
+        path_norm = str(pp).replace("\\", "/")
+        key = path_norm.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+
+        display_name = str(item.get("display_name") or item.get("name") or pp.name).strip() or pp.name
+        rows.append(
+            {
+                "name": pp.name,
+                "display_name": display_name,
+                "path": path_norm,
+            }
+        )
+
+    try:
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        catalog_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def _iter_capcut_project_dirs(root: Path = DEFAULT_CAPCUT_PROJECTS_ROOT) -> list[Path]:
@@ -538,6 +620,8 @@ def load_mask_background_library(cache_root: Path | None = None) -> list[dict[st
 
     name_map = _collect_online_material_display_name_map()
 
+    catalog_items = _load_mask_background_catalog()
+
     global_fav_ids = _collect_global_favorite_material_ids()
     favorite_items = _collect_favorite_background_items_from_projects(global_favorite_ids=global_fav_ids)
 
@@ -548,15 +632,17 @@ def load_mask_background_library(cache_root: Path | None = None) -> list[dict[st
         display_name_by_basename=name_map,
     )
 
-    # Gộp favorite + full catalog, không trùng path.
+    # Gộp catalog cố định + favorite + full onlineMaterial, không trùng path.
     out: list[dict[str, Any]] = []
     seen_path: set[str] = set()
 
-    for item in [*favorite_items, *online_items]:
+    for item in [*catalog_items, *favorite_items, *online_items]:
         p = str(item.get("path") or "").strip().lower()
         if not p or p in seen_path:
             continue
         seen_path.add(p)
         out.append(item)
 
+    # persist catalog kiểu transition: lần sau mở tool vẫn có danh mục đã học được.
+    _save_mask_background_catalog(out)
     return out
