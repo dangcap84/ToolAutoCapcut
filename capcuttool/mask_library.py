@@ -64,6 +64,18 @@ def _is_readable_display_name(display_name: str, fallback_filename: str = "") ->
     return True
 
 
+def _best_effort_display_name(display_name: str, fallback_filename: str) -> str:
+    preferred = (display_name or "").strip()
+    if _is_readable_display_name(preferred, fallback_filename):
+        return preferred
+
+    stem = Path(fallback_filename or "").stem.replace("_", " ").replace("-", " ").strip()
+    if _is_readable_display_name(stem, fallback_filename):
+        return stem
+
+    return ""
+
+
 def _candidate_pack_roots() -> list[Path]:
     roots: list[Path] = [DEFAULT_MASK_BG_PACK_ROOT]
 
@@ -241,8 +253,8 @@ def _library_from_paths(
             continue
         seen.add(key)
 
-        display_name = name_map.get(p.name.lower(), "").strip()
-        if not _is_readable_display_name(display_name, p.name):
+        display_name = _best_effort_display_name(name_map.get(p.name.lower(), ""), p.name)
+        if not display_name:
             continue
 
         out.append(
@@ -291,8 +303,8 @@ def _load_mask_background_catalog(catalog_path: Path = DEFAULT_MASK_BG_CATALOG_P
             continue
         seen.add(key)
 
-        display_name = str(item.get("display_name") or item.get("name") or pp.name)
-        if not _is_readable_display_name(display_name, pp.name):
+        display_name = _best_effort_display_name(str(item.get("display_name") or item.get("name") or ""), pp.name)
+        if not display_name:
             continue
 
         out.append(
@@ -333,8 +345,8 @@ def _save_mask_background_catalog(
             continue
         seen.add(key)
 
-        display_name = str(item.get("display_name") or item.get("name") or pp.name).strip() or pp.name
-        if not _is_readable_display_name(display_name, pp.name):
+        display_name = _best_effort_display_name(str(item.get("display_name") or item.get("name") or ""), pp.name)
+        if not display_name:
             continue
 
         rows.append(
@@ -545,8 +557,9 @@ def _collect_online_material_display_name_map(projects_root: Path = DEFAULT_CAPC
             if not material_name and material_id:
                 material_name = key_name_by_mid.get(material_id, "").strip()
 
-            if material_name and _is_readable_display_name(material_name, p.name):
-                out[base_key] = material_name
+            picked = _best_effort_display_name(material_name, p.name)
+            if picked:
+                out[base_key] = picked
 
     return out
 
@@ -620,8 +633,8 @@ def _collect_favorite_background_items_from_projects(projects_root: Path = DEFAU
                 continue
             seen_path.add(key)
 
-            display_name = str(item.get("material_name") or fav_ids.get(material_id) or path_obj.name)
-            if not _is_readable_display_name(display_name, path_obj.name):
+            display_name = _best_effort_display_name(str(item.get("material_name") or fav_ids.get(material_id) or ""), path_obj.name)
+            if not display_name:
                 continue
 
             source = "favorite"
