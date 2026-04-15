@@ -526,8 +526,9 @@ def _collect_favorite_background_items_from_projects(projects_root: Path = DEFAU
 
 def load_mask_background_library(cache_root: Path | None = None) -> list[dict[str, Any]]:
     """
-    Ưu tiên lọc theo thuộc tính Favorite từ chính dữ liệu CapCut.
-    Nếu chưa map được favorite -> fallback toàn bộ onlineMaterial.
+    Trả danh sách background gồm:
+    1) Favorite (nếu tìm được) ở đầu danh sách.
+    2) Toàn bộ catalog onlineMaterial bên dưới để user luôn thấy full danh mục.
     """
     if cache_root is None:
         cache_root = DEFAULT_MASK_BG_CACHE_ROOT
@@ -535,15 +536,27 @@ def load_mask_background_library(cache_root: Path | None = None) -> list[dict[st
     # vẫn seed pack vào cache để backward-compatible, nhưng KHÔNG đưa vào library mặc định
     seed_mask_background_cache(cache_root=cache_root)
 
+    name_map = _collect_online_material_display_name_map()
+
     global_fav_ids = _collect_global_favorite_material_ids()
     favorite_items = _collect_favorite_background_items_from_projects(global_favorite_ids=global_fav_ids)
-    if favorite_items:
-        return favorite_items
 
     online_videos = _iter_video_files_recursive(DEFAULT_ONLINE_MATERIAL_ROOT, max_items=4000)
-    name_map = _collect_online_material_display_name_map()
-    return _library_from_paths(
+    online_items = _library_from_paths(
         online_videos,
         source="onlineMaterial",
         display_name_by_basename=name_map,
     )
+
+    # Gộp favorite + full catalog, không trùng path.
+    out: list[dict[str, Any]] = []
+    seen_path: set[str] = set()
+
+    for item in [*favorite_items, *online_items]:
+        p = str(item.get("path") or "").strip().lower()
+        if not p or p in seen_path:
+            continue
+        seen_path.add(p)
+        out.append(item)
+
+    return out
