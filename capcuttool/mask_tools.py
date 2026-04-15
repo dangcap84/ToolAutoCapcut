@@ -155,9 +155,9 @@ def _build_draft_material(
     dm["type"] = "combination"
     dm.setdefault("combination_type", "none")
 
-    nested = dm.get("draft")
-    if not isinstance(nested, dict):
-        nested = copy.deepcopy(base_before_mask)
+    # Luôn lấy draft hiện tại của project làm base để tránh bị kéo media/template
+    # từ project mẫu (vd Test1-mask) sang project đích.
+    nested = copy.deepcopy(base_before_mask)
     nested["duration"] = int(total_duration_us)
 
     cfg = nested.get("canvas_config") if isinstance(nested.get("canvas_config"), dict) else {}
