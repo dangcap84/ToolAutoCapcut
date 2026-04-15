@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+_VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
+
 
 def _new_id() -> str:
     return str(uuid4()).upper()
@@ -177,6 +179,64 @@ def _ensure_material_list(materials: dict[str, Any], key: str) -> list[dict[str,
     return cur
 
 
+def _is_video_material(mat: dict[str, Any]) -> bool:
+    if not isinstance(mat, dict):
+        return False
+    mtype = str(mat.get("type") or "").lower()
+    if mtype == "video":
+        return True
+    path = str(mat.get("path") or "")
+    return Path(path).suffix.lower() in _VIDEO_EXTS
+
+
+def _pick_video_material_template(
+    materials: dict[str, Any],
+    template_materials: dict[str, Any],
+) -> dict[str, Any]:
+    for src in [materials.get("videos"), template_materials.get("videos")]:
+        if not isinstance(src, list):
+            continue
+        for item in src:
+            if _is_video_material(item):
+                return _clone(item)
+    return {}
+
+
+def _ensure_support_material(
+    materials: dict[str, Any],
+    key: str,
+    default_obj: dict[str, Any],
+) -> str:
+    arr = _ensure_material_list(materials, key)
+    if arr and isinstance(arr[0], dict) and arr[0].get("id"):
+        return str(arr[0]["id"])
+
+    obj = _clone(default_obj)
+    obj["id"] = _new_id()
+    arr.append(obj)
+    return str(obj["id"])
+
+
+def _ensure_segment_support_refs(materials: dict[str, Any], include_mask_id: str | None = None, include_draft_id: str | None = None) -> list[str]:
+    refs: list[str] = []
+
+    if include_draft_id:
+        refs.append(include_draft_id)
+
+    refs.append(_ensure_support_material(materials, "speeds", {"type": "speed", "speed": 1.0, "mode": 0, "curve_speed": None}))
+    refs.append(_ensure_support_material(materials, "placeholder_infos", {"type": "placeholder_info", "error_path": "", "error_text": "", "meta_type": "none", "res_path": "", "res_text": ""}))
+    refs.append(_ensure_support_material(materials, "canvases", {"type": "canvas_color", "color": "", "image": "", "image_id": "", "image_name": "", "blur": 0.0, "album_image": "", "source_platform": 0, "team_id": ""}))
+
+    if include_mask_id:
+        refs.append(include_mask_id)
+
+    refs.append(_ensure_support_material(materials, "sound_channel_mappings", {"type": "none", "audio_channel_mapping": 0, "is_config_open": False}))
+    refs.append(_ensure_support_material(materials, "material_colors", {"solid_color": "", "is_gradient": False, "gradient_angle": 90.0, "gradient_colors": [], "gradient_percents": [], "is_color_clip": False, "width": 0.0, "height": 0.0}))
+    refs.append(_ensure_support_material(materials, "vocal_separations", {"type": "vocal_separation"}))
+
+    return refs
+
+
 def _register_background_catalog(paths: list[str], catalog_path: Path | None) -> int:
     if catalog_path is None:
         return 0
@@ -301,9 +361,11 @@ def apply_mask_to_draft(
     bg_paths = [str(Path(p)).replace("\\", "/") for p in background_paths if str(p).strip()]
     bg_added = _register_background_catalog(bg_paths, background_catalog_path)
 
+    seg_support_refs = _ensure_segment_support_refs(materials)
+
     if bg_paths:
         seg_template = _clone(main_segments[0])
-        vm_template = _clone(videos[0]) if videos else {}
+        vm_template = _pick_video_material_template(materials, template_materials)
 
         bg_ids: list[str] = []
         for p in bg_paths:
@@ -313,6 +375,8 @@ def apply_mask_to_draft(
             vm["path"] = p
             vm["material_name"] = Path(p).name
             vm["duration"] = int(total_duration_us)
+            vm["extra_type_option"] = int(vm.get("extra_type_option") or 0)
+            vm["has_audio"] = bool(vm.get("has_audio") or False)
             videos.append(vm)
             bg_ids.append(vm["id"])
 
@@ -329,6 +393,7 @@ def apply_mask_to_draft(
             seg["render_index"] = 0
             seg["track_render_index"] = 0
             seg["enable_video_mask"] = True
+            seg["extra_material_refs"] = list(seg_support_refs)
             rebuilt.append(seg)
             cursor += dur
 
@@ -337,6 +402,7 @@ def apply_mask_to_draft(
         for seg in main_segments:
             if isinstance(seg, dict):
                 seg["enable_video_mask"] = True
+                seg["extra_material_refs"] = list(seg_support_refs)
 
     # 2) tạo track trên cùng chứa 1 clip combination + mask.
     top_track = _ensure_video_track(draft, flag=2)
@@ -350,14 +416,7 @@ def apply_mask_to_draft(
     top_seg["track_render_index"] = 1
     top_seg["enable_video_mask"] = True
 
-    refs = top_seg.get("extra_material_refs")
-    if not isinstance(refs, list):
-        refs = []
-    refs = [str(x) for x in refs if x]
-    if comb_draft["id"] not in refs:
-        refs.insert(0, comb_draft["id"])
-    if mask_mat["id"] not in refs:
-        refs.append(mask_mat["id"])
+    refs = _ensure_segment_support_refs(materials, include_mask_id=mask_mat["id"], include_draft_id=comb_draft["id"])
     top_seg["extra_material_refs"] = refs
 
     top_track["segments"] = [top_seg]

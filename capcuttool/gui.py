@@ -70,7 +70,7 @@ MASK_BACKGROUND_CATALOG_PATH = BASE_DIR / "mask_background_catalog.json"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.10")
+        self.root.title("CapCut Sync v3.9.11")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -208,7 +208,7 @@ class CapCutGui:
         self.keyframe_duration_seconds_var = tk.StringVar(value="3.0")
 
         self.mask_overlay_width_var = tk.StringVar(value="1800")
-        self.mask_overlay_height_var = tk.StringVar(value="900")
+        self.mask_overlay_height_var = tk.StringVar(value="928")
         self.mask_backgrounds_var = tk.StringVar(value="")
         self.mask_library_catalog: list[dict] = []
         self.mask_library_check_vars: list[tk.BooleanVar] = []
