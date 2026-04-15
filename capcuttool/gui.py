@@ -70,7 +70,7 @@ MASK_BACKGROUND_CATALOG_PATH = BASE_DIR / "mask_background_catalog.json"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.8")
+        self.root.title("CapCut Sync v3.9.10")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -295,6 +295,7 @@ class CapCutGui:
         keyframe_tab.columnconfigure(0, weight=1)
         keyframe_tab.rowconfigure(0, weight=1)
         mask_tab.columnconfigure(0, weight=1)
+        mask_tab.rowconfigure(0, weight=1)
 
         nav_tabs.add(create_tab, text="Tạo dự án")
         nav_tabs.add(sync_tab, text="Đồng bộ")
@@ -509,38 +510,51 @@ class CapCutGui:
         mask_card = ttk.Labelframe(
             mask_tab,
             text="Video Mask",
-            padding=12,
+            padding=8,
             style="ProjectCard.TLabelframe",
         )
         mask_card.grid(row=0, column=0, sticky=NSEW)
         mask_card.columnconfigure(1, weight=1)
-        mask_card.rowconfigure(7, weight=1)
+        mask_card.rowconfigure(5, weight=1)
 
-        ttk.Label(
-            mask_card,
-            text="Flow: gộp media thành clip con, tạo overlay mask, đẩy lên line trên và thay nền line chính.",
-            style="Subtle.TLabel",
-        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 10))
+        ttk.Label(mask_card, text="Overlay W:", style="Subtle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Entry(mask_card, textvariable=self.mask_overlay_width_var, style="Search.TEntry", width=9).grid(row=0, column=1, sticky="w", padx=(6, 0))
 
-        ttk.Label(mask_card, text="Overlay W:", style="Subtle.TLabel").grid(row=1, column=0, sticky="w")
-        ttk.Entry(mask_card, textvariable=self.mask_overlay_width_var, style="Search.TEntry", width=10).grid(row=1, column=1, sticky="w", padx=(6, 0))
+        ttk.Label(mask_card, text="Overlay H:", style="Subtle.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Entry(mask_card, textvariable=self.mask_overlay_height_var, style="Search.TEntry", width=9).grid(row=1, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
 
-        ttk.Label(mask_card, text="Overlay H:", style="Subtle.TLabel").grid(row=2, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(mask_card, textvariable=self.mask_overlay_height_var, style="Search.TEntry", width=10).grid(row=2, column=1, sticky="w", padx=(6, 0), pady=(6, 0))
+        ttk.Label(mask_card, text="Background path (tuỳ chọn):", style="Subtle.TLabel").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(mask_card, textvariable=self.mask_backgrounds_var, style="Search.TEntry").grid(row=2, column=1, columnspan=2, sticky=EW, padx=(6, 0), pady=(6, 0))
 
-        ttk.Label(mask_card, text="Backgrounds (path thủ công):", style="Subtle.TLabel").grid(row=3, column=0, sticky="w", pady=(8, 0))
-        ttk.Entry(mask_card, textvariable=self.mask_backgrounds_var, style="Search.TEntry").grid(row=3, column=1, columnspan=2, sticky=EW, padx=(6, 0), pady=(8, 0))
+        action_row = ttk.Frame(mask_card, style="Panel.TFrame")
+        action_row.grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ttk.Button(
+            action_row,
+            text="Làm mới",
+            style="Ghost.TButton",
+            command=self._on_refresh_mask_library,
+            width=10,
+        ).grid(row=0, column=0, sticky="w")
 
-        ttk.Label(mask_card, text="Background từ Test1-mask:", style="Subtle.TLabel").grid(row=4, column=0, columnspan=3, sticky="w", pady=(10, 4))
+        self.apply_mask_button = ttk.Button(
+            action_row,
+            text="Áp dụng",
+            style="Accent.TButton",
+            command=self._on_apply_mask_only,
+            width=12,
+        )
+        self.apply_mask_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
+
+        ttk.Label(mask_card, text="Background có sẵn (embedded trong EXE):", style="Subtle.TLabel").grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 4))
 
         mask_lib_host = ttk.Frame(mask_card, style="Panel.TFrame")
         mask_lib_host.grid(row=5, column=0, columnspan=3, sticky=NSEW)
         mask_lib_host.columnconfigure(0, weight=1)
         mask_lib_host.rowconfigure(0, weight=1)
-        mask_lib_host.configure(height=120)
+        mask_lib_host.configure(height=88)
         mask_lib_host.grid_propagate(False)
 
-        mask_lib_canvas = tk.Canvas(mask_lib_host, background=PANEL_2, highlightthickness=0, bd=0, height=120)
+        mask_lib_canvas = tk.Canvas(mask_lib_host, background=PANEL_2, highlightthickness=0, bd=0, height=88)
         mask_lib_canvas.grid(row=0, column=0, sticky=NSEW)
         mask_lib_scroll = tk.Scrollbar(mask_lib_host, orient="vertical", command=mask_lib_canvas.yview, width=14, relief="raised")
         mask_lib_scroll.grid(row=0, column=1, sticky="ns")
@@ -557,29 +571,6 @@ class CapCutGui:
 
         self.mask_library_container.bind("<Configure>", _sync_masklib_scroll)
         mask_lib_canvas.bind("<Configure>", _sync_masklib_width)
-
-        ttk.Button(
-            mask_card,
-            text="Làm mới",
-            style="Ghost.TButton",
-            command=self._on_refresh_mask_library,
-            width=10,
-        ).grid(row=6, column=0, sticky="w", pady=(8, 0))
-
-        self.apply_mask_button = ttk.Button(
-            mask_card,
-            text="Áp dụng",
-            style="Accent.TButton",
-            command=self._on_apply_mask_only,
-            width=12,
-        )
-        self.apply_mask_button.grid(row=6, column=1, sticky="w", pady=(8, 0), padx=(6, 0))
-
-        ttk.Label(
-            mask_card,
-            text="Mẹo: có thể tick background mẫu + thêm path thủ công; tool sẽ gộp và lưu catalog tái dùng.",
-            style="Subtle.TLabel",
-        ).grid(row=7, column=0, columnspan=3, sticky="nw", pady=(8, 0))
 
         right_panel = ttk.Frame(main_frame, style="Panel.TFrame")
         right_panel.grid(row=1, column=1, sticky=NSEW)
