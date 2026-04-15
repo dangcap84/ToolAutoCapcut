@@ -74,9 +74,15 @@ def _best_effort_display_name(display_name: str, fallback_filename: str) -> str:
     if _is_readable_display_name(preferred, fallback_filename):
         return preferred
 
-    stem = Path(fallback_filename or "").stem.replace("_", " ").replace("-", " ").strip()
+    stem_raw = Path(fallback_filename or "").stem
+    stem = stem_raw.replace("_", " ").replace("-", " ").strip()
     if _is_readable_display_name(stem, fallback_filename):
         return stem
+
+    # Fallback cuối: nếu filename là hash (không có tên metadata),
+    # tạo nhãn readable để UI không bị rỗng khi user dọn project tham chiếu.
+    if re.fullmatch(r"[0-9a-f]{24,64}", stem_raw.lower()):
+        return f"Background {stem_raw[:8]}"
 
     return ""
 
