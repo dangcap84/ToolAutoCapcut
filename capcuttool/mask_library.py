@@ -41,6 +41,22 @@ DEFAULT_CAPCUT_PROJECTS_ROOT = DEFAULT_CAPCUT_USER_DATA_ROOT / "Projects" / "com
 
 _MASK_VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 
+# Mapping tạm tên readable cho các onlineMaterial ID đã xác nhận.
+# Dùng làm default fallback khi CapCut metadata bị thiếu/mất.
+DEFAULT_ONLINE_MATERIAL_NAME_MAP: dict[str, str] = {
+    "49ac9813cae7f6f87a6f03734efa0c3d.mp4": "Falling pink sakura flowers background animation. Abstract flat animation",
+    "3f4a7cda779843780c180f6d95dd006d.mp4": "pexels-weldi-studio-design-8675587",
+    "c3a921a326ee451dd6ef2fbe30cd9c10.mp4": "Cliff with waves crashing against a rocky shore, Nusa Penida, Indonesia.",
+    "06daa67c2675769c8c2ba227468fc590.mp4": "Aerial Moscow District Buildings and houses Cityscape",
+    "a168dee4e80d8b5703c88df2a480038f.mp4": "Flat Geometric Shapes Red",
+    "ce97af96b65b7059597e06502f9765f1.mp4": "Bright neon seamless animation of heart sign. Design element for Happy Valentine's Day. For greeting card, banner, signboard. 4K video close-up.",
+    "807205b8ffecf7f30bdbfa09db1b0277.mp4": "Seagulls on the beach",
+    "e578e6f7e9aa548dc257f95f1ed2ae5b.mp4": "4K:Timelapse of the clear sky.",
+    "81304eb1924b2452c1b64d23b1bb6d69.mp4": "Golden Sunset Reflected in Water of Tropical Beach",
+    "daf89cec03e1d2c4cbbd24050a9287fd.mp4": "Falling snow particles isolated on black background",
+    "5f7c5949617cf594f28e69e968a64bc8.mp4": "Minimal Motion Graphic Animation Of Lines Moving Up And Down On A Black",
+}
+
 
 def _is_readable_display_name(display_name: str, fallback_filename: str = "") -> bool:
     s = (display_name or "").strip()
@@ -644,7 +660,11 @@ def _collect_favorite_background_items_from_projects(projects_root: Path = DEFAU
                 continue
             seen_path.add(key)
 
-            display_name = _best_effort_display_name(str(item.get("material_name") or fav_ids.get(material_id) or ""), path_obj.name)
+            seeded_name = DEFAULT_ONLINE_MATERIAL_NAME_MAP.get(path_obj.name.lower(), "")
+            display_name = _best_effort_display_name(
+                str(item.get("material_name") or fav_ids.get(material_id) or seeded_name or ""),
+                path_obj.name,
+            )
             if not display_name:
                 continue
 
@@ -676,7 +696,8 @@ def load_mask_background_library(cache_root: Path | None = None) -> list[dict[st
     # vẫn seed pack vào cache để backward-compatible, nhưng KHÔNG đưa vào library mặc định
     seed_mask_background_cache(cache_root=cache_root)
 
-    name_map = _collect_online_material_display_name_map()
+    name_map = {k.lower(): v for k, v in DEFAULT_ONLINE_MATERIAL_NAME_MAP.items()}
+    name_map.update(_collect_online_material_display_name_map())
 
     catalog_items = _load_mask_background_catalog()
 
