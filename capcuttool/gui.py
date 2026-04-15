@@ -64,6 +64,7 @@ SUBTEXT = "#94a3b8"
 TRANSITION_CATALOG_LIMIT = 50
 BULK_ACTION_WARNING_THRESHOLD = 5
 MASK_BACKGROUND_CATALOG_PATH = BASE_DIR / "mask_background_catalog.json"
+MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 
 
 class CapCutGui:
@@ -209,6 +210,9 @@ class CapCutGui:
         self.mask_overlay_width_var = tk.StringVar(value="1800")
         self.mask_overlay_height_var = tk.StringVar(value="900")
         self.mask_backgrounds_var = tk.StringVar(value="")
+        self.mask_library_catalog: list[dict] = []
+        self.mask_library_check_vars: list[tk.BooleanVar] = []
+        self.mask_library_container: ttk.Frame | None = None
 
         self.project_items: list[tuple[str, str, tk.BooleanVar, ttk.Checkbutton]] = []
         self.project_stats_var = tk.StringVar(value="Đã chọn 0/0 dự án")
@@ -239,6 +243,7 @@ class CapCutGui:
         if seeded > 0:
             self._append_log(f"[TRANSITION] seeded_effect_cache_from_pack={seeded}\n")
         self._load_transition_catalog_to_input(show_message=False)
+        self._load_mask_library_to_input(show_message=False)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_layout(self) -> None:
@@ -504,8 +509,9 @@ class CapCutGui:
             padding=12,
             style="ProjectCard.TLabelframe",
         )
-        mask_card.grid(row=0, column=0, sticky=EW)
+        mask_card.grid(row=0, column=0, sticky=NSEW)
         mask_card.columnconfigure(1, weight=1)
+        mask_card.rowconfigure(7, weight=1)
 
         ttk.Label(
             mask_card,
@@ -519,8 +525,43 @@ class CapCutGui:
         ttk.Label(mask_card, text="Overlay H:", style="Subtle.TLabel").grid(row=2, column=0, sticky="w", pady=(6, 0))
         ttk.Entry(mask_card, textvariable=self.mask_overlay_height_var, style="Search.TEntry", width=10).grid(row=2, column=1, sticky="w", padx=(6, 0), pady=(6, 0))
 
-        ttk.Label(mask_card, text="Backgrounds (phân cách dấu phẩy):", style="Subtle.TLabel").grid(row=3, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(mask_card, text="Backgrounds (path thủ công):", style="Subtle.TLabel").grid(row=3, column=0, sticky="w", pady=(8, 0))
         ttk.Entry(mask_card, textvariable=self.mask_backgrounds_var, style="Search.TEntry").grid(row=3, column=1, columnspan=2, sticky=EW, padx=(6, 0), pady=(8, 0))
+
+        ttk.Label(mask_card, text="Background từ Test1-mask:", style="Subtle.TLabel").grid(row=4, column=0, columnspan=3, sticky="w", pady=(10, 4))
+
+        mask_lib_host = ttk.Frame(mask_card, style="Panel.TFrame")
+        mask_lib_host.grid(row=5, column=0, columnspan=3, sticky=NSEW)
+        mask_lib_host.columnconfigure(0, weight=1)
+        mask_lib_host.rowconfigure(0, weight=1)
+        mask_lib_host.configure(height=120)
+        mask_lib_host.grid_propagate(False)
+
+        mask_lib_canvas = tk.Canvas(mask_lib_host, background=PANEL_2, highlightthickness=0, bd=0, height=120)
+        mask_lib_canvas.grid(row=0, column=0, sticky=NSEW)
+        mask_lib_scroll = tk.Scrollbar(mask_lib_host, orient="vertical", command=mask_lib_canvas.yview, width=14, relief="raised")
+        mask_lib_scroll.grid(row=0, column=1, sticky="ns")
+        mask_lib_canvas.configure(yscrollcommand=mask_lib_scroll.set)
+
+        self.mask_library_container = ttk.Frame(mask_lib_canvas, style="Panel.TFrame")
+        mask_lib_window = mask_lib_canvas.create_window((0, 0), window=self.mask_library_container, anchor="nw")
+
+        def _sync_masklib_scroll(_event=None) -> None:
+            mask_lib_canvas.configure(scrollregion=mask_lib_canvas.bbox("all"))
+
+        def _sync_masklib_width(_event=None) -> None:
+            mask_lib_canvas.itemconfigure(mask_lib_window, width=mask_lib_canvas.winfo_width())
+
+        self.mask_library_container.bind("<Configure>", _sync_masklib_scroll)
+        mask_lib_canvas.bind("<Configure>", _sync_masklib_width)
+
+        ttk.Button(
+            mask_card,
+            text="Làm mới",
+            style="Ghost.TButton",
+            command=self._on_refresh_mask_library,
+            width=10,
+        ).grid(row=6, column=0, sticky="w", pady=(8, 0))
 
         self.apply_mask_button = ttk.Button(
             mask_card,
@@ -529,13 +570,13 @@ class CapCutGui:
             command=self._on_apply_mask_only,
             width=12,
         )
-        self.apply_mask_button.grid(row=4, column=0, sticky="w", pady=(10, 0))
+        self.apply_mask_button.grid(row=6, column=1, sticky="w", pady=(8, 0), padx=(6, 0))
 
         ttk.Label(
             mask_card,
-            text="Mẹo: có thể dán 2 path background để lưu catalog tái dùng cho lần sau.",
+            text="Mẹo: có thể tick background mẫu + thêm path thủ công; tool sẽ gộp và lưu catalog tái dùng.",
             style="Subtle.TLabel",
-        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ).grid(row=7, column=0, columnspan=3, sticky="nw", pady=(8, 0))
 
         right_panel = ttk.Frame(main_frame, style="Panel.TFrame")
         right_panel.grid(row=1, column=1, sticky=NSEW)
@@ -1448,6 +1489,85 @@ class CapCutGui:
             out.append(item)
         return out
 
+    def _load_mask_library_to_input(self, show_message: bool = True) -> None:
+        self.mask_library_catalog = []
+        self.mask_library_check_vars = []
+        if self.mask_library_container is not None:
+            for child in self.mask_library_container.winfo_children():
+                child.destroy()
+
+        template_project = DEFAULT_CAPCUT_PROJECT_ROOT / MASK_TEMPLATE_PROJECT_NAME
+        draft_path = template_project / "draft_content.json"
+        if not draft_path.exists():
+            if show_message:
+                messagebox.showwarning("Mask library", f"Không thấy project mẫu '{MASK_TEMPLATE_PROJECT_NAME}'.")
+            return
+
+        try:
+            draft = json.loads(draft_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            if show_message:
+                messagebox.showerror("Mask library", f"Đọc draft mẫu lỗi: {exc}")
+            return
+
+        materials = draft.get("materials")
+        videos = (materials or {}).get("videos") if isinstance(materials, dict) else None
+        if not isinstance(videos, list):
+            if show_message:
+                messagebox.showwarning("Mask library", "Draft mẫu không có materials.videos")
+            return
+
+        candidates: list[dict] = []
+        seen_paths: set[str] = set()
+        for v in videos:
+            if not isinstance(v, dict):
+                continue
+            p = str(v.get("path") or "").strip()
+            if not p:
+                continue
+            low = p.lower()
+            if low in seen_paths:
+                continue
+            seen_paths.add(low)
+            name = str(v.get("material_name") or Path(p).name or "background")
+            candidates.append({"name": name, "path": p})
+
+        # ưu tiên 2 video cuối cùng trong test-mask (mẫu user vừa thêm)
+        if len(candidates) > 2:
+            candidates = candidates[-2:]
+
+        self.mask_library_catalog = candidates
+
+        if self.mask_library_container is not None:
+            for idx, item in enumerate(candidates):
+                v = tk.BooleanVar(value=False)
+                label = f"{item['name']} — {item['path']}"
+                cb = ttk.Checkbutton(
+                    self.mask_library_container,
+                    text=label,
+                    variable=v,
+                    style="Transition.TCheckbutton",
+                )
+                cb.grid(row=idx, column=0, sticky="w", padx=(0, 8), pady=(0, 2))
+                self.mask_library_check_vars.append(v)
+
+        self._append_log(f"[MASK] library_loaded={len(candidates)} from={draft_path}\n")
+
+    def _on_refresh_mask_library(self) -> None:
+        self._load_mask_library_to_input(show_message=True)
+
+    def _get_selected_mask_library_paths(self) -> list[str]:
+        out: list[str] = []
+        for idx, item in enumerate(self.mask_library_catalog):
+            if idx >= len(self.mask_library_check_vars):
+                continue
+            if not self.mask_library_check_vars[idx].get():
+                continue
+            p = str(item.get("path") or "").strip()
+            if p:
+                out.append(p)
+        return out
+
     def _validate_mask_inputs(self) -> tuple[float, float, list[str]] | None:
         try:
             w = float(self.mask_overlay_width_var.get().strip())
@@ -1463,7 +1583,18 @@ class CapCutGui:
             messagebox.showerror("Input không hợp lệ", "Overlay W/H quá lớn (<= 8000).")
             return None
 
-        bg_paths = self._parse_background_paths(self.mask_backgrounds_var.get())
+        manual_paths = self._parse_background_paths(self.mask_backgrounds_var.get())
+        selected_library_paths = self._get_selected_mask_library_paths()
+
+        bg_paths: list[str] = []
+        seen: set[str] = set()
+        for p in [*selected_library_paths, *manual_paths]:
+            key = p.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            bg_paths.append(p)
+
         for p in bg_paths:
             if not Path(p).exists():
                 messagebox.showerror("Background không tồn tại", f"Không tìm thấy file: {p}")
