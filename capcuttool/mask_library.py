@@ -220,24 +220,17 @@ def _library_from_paths(paths: list[Path], source: str) -> list[dict[str, Any]]:
 
 
 def load_mask_background_library(cache_root: Path | None = None) -> list[dict[str, Any]]:
+    """
+    Ưu tiên tuyệt đối background từ CapCut user cache (onlineMaterial).
+
+    Lý do: yêu cầu workflow chỉ dùng các background do user quản lý trong CapCut,
+    không trộn embedded pack để tránh list bị lẫn "ngoài mục yêu thích/tài sản".
+    """
     if cache_root is None:
         cache_root = DEFAULT_MASK_BG_CACHE_ROOT
 
+    # vẫn seed pack vào cache để backward-compatible, nhưng KHÔNG đưa vào library mặc định
     seed_mask_background_cache(cache_root=cache_root)
 
     online_videos = _iter_video_files_recursive(DEFAULT_ONLINE_MATERIAL_ROOT, max_items=4000)
-    packed_videos = _iter_video_files(cache_root)
-
-    out: list[dict[str, Any]] = []
-    out.extend(_library_from_paths(online_videos, source="onlineMaterial"))
-
-    # fallback/backup source từ pack embedded
-    existing = {str(x.get("path") or "").lower() for x in out}
-    for item in _library_from_paths(packed_videos, source="embeddedPack"):
-        p = str(item.get("path") or "").lower()
-        if p in existing:
-            continue
-        existing.add(p)
-        out.append(item)
-
-    return out
+    return _library_from_paths(online_videos, source="onlineMaterial")
