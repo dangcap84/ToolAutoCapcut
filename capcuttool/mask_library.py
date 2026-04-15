@@ -42,6 +42,28 @@ DEFAULT_CAPCUT_PROJECTS_ROOT = DEFAULT_CAPCUT_USER_DATA_ROOT / "Projects" / "com
 _MASK_VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 
 
+def _is_readable_display_name(display_name: str, fallback_filename: str = "") -> bool:
+    s = (display_name or "").strip()
+    if not s:
+        return False
+
+    # ký tự lỗi decode/mojibake
+    if "�" in s:
+        return False
+
+    # không chấp nhận tên chỉ là hash file (vd: daf89c...mp4)
+    base = Path(fallback_filename or s).name
+    stem = Path(base).stem
+    if re.fullmatch(r"[0-9a-f]{24,64}", stem.lower()):
+        return False
+
+    # bắt buộc có ít nhất 1 chữ cái (unicode ok)
+    if not any(ch.isalpha() for ch in s):
+        return False
+
+    return True
+
+
 def _candidate_pack_roots() -> list[Path]:
     roots: list[Path] = [DEFAULT_MASK_BG_PACK_ROOT]
 
@@ -220,6 +242,9 @@ def _library_from_paths(
         seen.add(key)
 
         display_name = name_map.get(p.name.lower(), "").strip()
+        if not _is_readable_display_name(display_name, p.name):
+            continue
+
         out.append(
             {
                 "name": p.name,
@@ -267,6 +292,9 @@ def _load_mask_background_catalog(catalog_path: Path = DEFAULT_MASK_BG_CATALOG_P
         seen.add(key)
 
         display_name = str(item.get("display_name") or item.get("name") or pp.name)
+        if not _is_readable_display_name(display_name, pp.name):
+            continue
+
         out.append(
             {
                 "name": pp.name,
@@ -306,6 +334,9 @@ def _save_mask_background_catalog(
         seen.add(key)
 
         display_name = str(item.get("display_name") or item.get("name") or pp.name).strip() or pp.name
+        if not _is_readable_display_name(display_name, pp.name):
+            continue
+
         rows.append(
             {
                 "name": pp.name,
@@ -514,7 +545,7 @@ def _collect_online_material_display_name_map(projects_root: Path = DEFAULT_CAPC
             if not material_name and material_id:
                 material_name = key_name_by_mid.get(material_id, "").strip()
 
-            if material_name:
+            if material_name and _is_readable_display_name(material_name, p.name):
                 out[base_key] = material_name
 
     return out
@@ -590,6 +621,9 @@ def _collect_favorite_background_items_from_projects(projects_root: Path = DEFAU
             seen_path.add(key)
 
             display_name = str(item.get("material_name") or fav_ids.get(material_id) or path_obj.name)
+            if not _is_readable_display_name(display_name, path_obj.name):
+                continue
+
             source = "favorite"
             if material_id in global_ids and material_id not in fav_ids:
                 source = "favorite-global"
