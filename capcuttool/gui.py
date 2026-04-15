@@ -72,7 +72,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.35")
+        self.root.title("CapCut Sync v3.9.36")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -541,21 +541,6 @@ class CapCutGui:
 
         action_row = ttk.Frame(mask_card, style="Panel.TFrame")
         action_row.grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
-        ttk.Button(
-            action_row,
-            text="Làm mới",
-            style="Ghost.TButton",
-            command=self._on_refresh_mask_library,
-            width=10,
-        ).grid(row=0, column=0, sticky="w")
-
-        ttk.Checkbutton(
-            action_row,
-            text="Check all",
-            variable=self.mask_check_all_var,
-            command=self._on_toggle_mask_check_all,
-            style="Project.TCheckbutton",
-        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
 
         self.apply_mask_button = ttk.Button(
             action_row,
@@ -564,7 +549,7 @@ class CapCutGui:
             command=self._on_apply_mask_only,
             width=12,
         )
-        self.apply_mask_button.grid(row=0, column=2, sticky="w", padx=(8, 0))
+        self.apply_mask_button.grid(row=0, column=0, sticky="w")
 
         ttk.Label(mask_card, text="Background có sẵn (embedded trong EXE):", style="Subtle.TLabel").grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 4))
 
@@ -1592,7 +1577,15 @@ class CapCutGui:
         self.mask_library_catalog = candidates
 
         if self.mask_library_container is not None:
-            for idx, item in enumerate(candidates):
+            ttk.Checkbutton(
+                self.mask_library_container,
+                text="Check all",
+                variable=self.mask_check_all_var,
+                command=self._on_toggle_mask_check_all,
+                style="Transition.TCheckbutton",
+            ).grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 4))
+
+            for idx, item in enumerate(candidates, start=1):
                 v = tk.BooleanVar(value=False)
                 src = str(item.get("source") or "")
                 prefix = f"[{src}] " if src else ""
@@ -1609,7 +1602,7 @@ class CapCutGui:
                     command=self._on_toggle_mask_item,
                     style="Transition.TCheckbutton",
                 )
-                cb.grid(row=idx, column=0, sticky="w", padx=(0, 8), pady=(0, 2))
+                cb.grid(row=idx, column=0, sticky="w", padx=(12, 8), pady=(0, 2))
                 self.mask_library_check_vars.append(v)
 
         self._append_log(f"[MASK] library_loaded={len(candidates)} (favorite/name mode)\n")
