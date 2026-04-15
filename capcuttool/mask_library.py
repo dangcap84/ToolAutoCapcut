@@ -51,10 +51,15 @@ def _is_readable_display_name(display_name: str, fallback_filename: str = "") ->
     if "�" in s:
         return False
 
-    # không chấp nhận tên chỉ là hash file (vd: daf89c...mp4)
-    base = Path(fallback_filename or s).name
-    stem = Path(base).stem
-    if re.fullmatch(r"[0-9a-f]{24,64}", stem.lower()):
+    # không chấp nhận khi chính display_name là hash/file-hash
+    s_base = Path(s).name
+    s_stem = Path(s_base).stem
+    if re.fullmatch(r"[0-9a-f]{24,64}", s_stem.lower()):
+        return False
+
+    # nếu display_name trùng hệt filename hash thì cũng loại
+    fb = Path(fallback_filename or "").name
+    if fb and s_base.lower() == fb.lower() and re.fullmatch(r"[0-9a-f]{24,64}", Path(fb).stem.lower()):
         return False
 
     # bắt buộc có ít nhất 1 chữ cái (unicode ok)
