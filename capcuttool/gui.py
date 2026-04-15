@@ -71,7 +71,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.33")
+        self.root.title("CapCut Sync v3.9.34")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -190,6 +190,8 @@ class CapCutGui:
         self.batch_voices_root_var = tk.StringVar()
         self.batch_media_root_var = tk.StringVar()
         self.batch_project_name_var = tk.StringVar()
+        self.batch_video_volume_var = tk.StringVar(value="1.0")
+        self.batch_audio_volume_var = tk.StringVar(value="1.0")
         self.template_info_var = tk.StringVar(value="Template cache: chưa lưu")
         self.status_var = tk.StringVar(value="Sẵn sàng · Bấm Làm mới, chọn dự án rồi Đồng bộ")
 
@@ -213,6 +215,7 @@ class CapCutGui:
         self.mask_backgrounds_var = tk.StringVar(value="")
         self.mask_library_catalog: list[dict] = []
         self.mask_library_check_vars: list[tk.BooleanVar] = []
+        self.mask_check_all_var = tk.BooleanVar(value=False)
         self.mask_library_container: ttk.Frame | None = None
 
         self.project_items: list[tuple[str, str, tk.BooleanVar, ttk.Checkbutton]] = []
@@ -357,6 +360,13 @@ class CapCutGui:
         ttk.Label(batch_card, text="Tên project (tuỳ chọn):", style="Subtle.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(6, 0))
         ttk.Entry(batch_card, textvariable=self.batch_project_name_var, style="Search.TEntry").grid(row=2, column=1, sticky=EW, pady=(6, 0))
 
+        vol_row = ttk.Frame(batch_card, style="Panel.TFrame")
+        vol_row.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        ttk.Label(vol_row, text="Âm lượng video:", style="Subtle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Entry(vol_row, textvariable=self.batch_video_volume_var, width=8, style="Search.TEntry").grid(row=0, column=1, sticky="w", padx=(6, 12))
+        ttk.Label(vol_row, text="Âm lượng audio:", style="Subtle.TLabel").grid(row=0, column=2, sticky="w")
+        ttk.Entry(vol_row, textvariable=self.batch_audio_volume_var, width=8, style="Search.TEntry").grid(row=0, column=3, sticky="w", padx=(6, 0))
+
         self.batch_button = ttk.Button(
             batch_card,
             text="Tạo batch",
@@ -364,13 +374,13 @@ class CapCutGui:
             style="Secondary.TButton",
             width=12,
         )
-        self.batch_button.grid(row=3, column=0, sticky="w", pady=(10, 0))
+        self.batch_button.grid(row=4, column=0, sticky="w", pady=(10, 0))
 
         ttk.Label(
             batch_card,
             textvariable=self.template_info_var,
             style="Subtle.TLabel",
-        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         transition_card = ttk.Labelframe(
             transition_tab,
@@ -537,6 +547,14 @@ class CapCutGui:
             width=10,
         ).grid(row=0, column=0, sticky="w")
 
+        ttk.Checkbutton(
+            action_row,
+            text="Check all",
+            variable=self.mask_check_all_var,
+            command=self._on_toggle_mask_check_all,
+            style="Project.TCheckbutton",
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+
         self.apply_mask_button = ttk.Button(
             action_row,
             text="Áp dụng",
@@ -544,7 +562,7 @@ class CapCutGui:
             command=self._on_apply_mask_only,
             width=12,
         )
-        self.apply_mask_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
+        self.apply_mask_button.grid(row=0, column=2, sticky="w", padx=(8, 0))
 
         ttk.Label(mask_card, text="Background có sẵn (embedded trong EXE):", style="Subtle.TLabel").grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 4))
 
@@ -761,7 +779,11 @@ class CapCutGui:
     def _list_child_dirs(self, root: Path) -> list[Path]:
         if not root.exists() or not root.is_dir():
             return []
-        return sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name.lower())
+        dirs = [p for p in root.iterdir() if p.is_dir()]
+        return sorted(
+            dirs,
+            key=lambda p: (-p.stat().st_mtime, p.name.lower()),
+        )
 
     def _ensure_unique_project_dir(self, base_name: str) -> Path:
         safe_name = base_name.strip() or "project_moi"
@@ -825,7 +847,14 @@ class CapCutGui:
         tracks.append(tr)
         return tr
 
-    def _fill_project_draft_with_inputs(self, draft: dict, media_dir: Path, voice_dir: Path) -> tuple[int, int]:
+    def _fill_project_draft_with_inputs(
+        self,
+        draft: dict,
+        media_dir: Path,
+        voice_dir: Path,
+        video_volume: float = 1.0,
+        audio_volume: float = 1.0,
+    ) -> tuple[int, int]:
         media_files = self._scan_files(media_dir, MEDIA_EXTS)
         voice_files = self._scan_files(voice_dir, AUDIO_EXTS)
 
@@ -895,6 +924,8 @@ class CapCutGui:
             seg["source_timerange"] = {"start": 0, "duration": dur}
             seg["render_index"] = idx
             seg["track_render_index"] = 0
+            seg["volume"] = float(video_volume)
+            seg["last_nonzero_volume"] = float(video_volume)
             v_segments.append(seg)
             v_cursor += dur
 
@@ -908,6 +939,8 @@ class CapCutGui:
             seg["source_timerange"] = {"start": 0, "duration": dur}
             seg["render_index"] = idx
             seg["track_render_index"] = 1
+            seg["volume"] = float(audio_volume)
+            seg["last_nonzero_volume"] = float(audio_volume)
             a_segments.append(seg)
             a_cursor += dur
 
@@ -921,13 +954,26 @@ class CapCutGui:
 
         return len(videos), len(audios)
 
-    def _hydrate_project_drafts_with_inputs(self, project_dir: Path, media_dir: Path, voice_dir: Path) -> tuple[int, int]:
+    def _hydrate_project_drafts_with_inputs(
+        self,
+        project_dir: Path,
+        media_dir: Path,
+        voice_dir: Path,
+        video_volume: float = 1.0,
+        audio_volume: float = 1.0,
+    ) -> tuple[int, int]:
         main_draft = project_dir / "draft_content.json"
         if not main_draft.exists():
             raise FileNotFoundError(f"Thiếu file: {main_draft}")
 
         draft = json.loads(main_draft.read_text(encoding="utf-8"))
-        media_count, voice_count = self._fill_project_draft_with_inputs(draft, media_dir, voice_dir)
+        media_count, voice_count = self._fill_project_draft_with_inputs(
+            draft,
+            media_dir,
+            voice_dir,
+            video_volume=video_volume,
+            audio_volume=audio_volume,
+        )
         main_draft.write_text(json.dumps(draft, ensure_ascii=False, indent=2), encoding="utf-8")
 
         timelines_dir = project_dir / "Timelines"
@@ -937,7 +983,13 @@ class CapCutGui:
                 if not child.is_dir() or not p.exists():
                     continue
                 d = json.loads(p.read_text(encoding="utf-8"))
-                self._fill_project_draft_with_inputs(d, media_dir, voice_dir)
+                self._fill_project_draft_with_inputs(
+                    d,
+                    media_dir,
+                    voice_dir,
+                    video_volume=video_volume,
+                    audio_volume=audio_volume,
+                )
                 p.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
 
         meta_path = project_dir / "draft_meta_info.json"
@@ -1072,6 +1124,17 @@ class CapCutGui:
         media_root = Path(self.batch_media_root_var.get().strip())
         project_name = self.batch_project_name_var.get().strip()
 
+        try:
+            video_volume = float(self.batch_video_volume_var.get().strip())
+            audio_volume = float(self.batch_audio_volume_var.get().strip())
+        except ValueError:
+            messagebox.showerror("Input không hợp lệ", "Âm lượng video/audio phải là số.")
+            return
+
+        if video_volume < 0 or audio_volume < 0:
+            messagebox.showerror("Input không hợp lệ", "Âm lượng video/audio phải >= 0.")
+            return
+
         if not voices_root.exists() or not voices_root.is_dir():
             messagebox.showerror("Thiếu thư mục", "Thư mục voice không hợp lệ.")
             return
@@ -1113,7 +1176,7 @@ class CapCutGui:
         self.current_action = "batch_create"
         self._append_log("\n--- Tạo batch project ---\n")
         self._append_log(
-            f"template={template_project}\nvoices_root={voices_root}\nmedia_root={media_root}\nproject_name={project_name or '[auto]'}\n"
+            f"template={template_project}\nvoices_root={voices_root}\nmedia_root={media_root}\nproject_name={project_name or '[auto]'}\nvideo_volume={video_volume}\naudio_volume={audio_volume}\n"
         )
         self._set_status("Đang tạo project hàng loạt từ template...", "info")
         self._set_running_state(True)
@@ -1126,6 +1189,8 @@ class CapCutGui:
                 voices_root,
                 media_root,
                 project_name,
+                video_volume,
+                audio_volume,
             ),
             daemon=True,
         ).start()
@@ -1136,6 +1201,8 @@ class CapCutGui:
         voices_root: Path,
         media_root: Path,
         project_name: str,
+        video_volume: float,
+        audio_volume: float,
     ) -> None:
         output_buf = io.StringIO()
         overall_code = 0
@@ -1155,7 +1222,13 @@ class CapCutGui:
                     self._replace_folder_with_files(images_dir, m_dir)
                     self._replace_folder_with_files(voices_dir, v_dir)
 
-                    media_count, voice_count = self._hydrate_project_drafts_with_inputs(new_project, m_dir, v_dir)
+                    media_count, voice_count = self._hydrate_project_drafts_with_inputs(
+                        new_project,
+                        m_dir,
+                        v_dir,
+                        video_volume=video_volume,
+                        audio_volume=audio_volume,
+                    )
 
                     print(f"images={images_dir}")
                     print(f"voices={voices_dir}")
@@ -1484,9 +1557,22 @@ class CapCutGui:
             out.append(item)
         return out
 
+    def _on_toggle_mask_item(self) -> None:
+        if not self.mask_library_check_vars:
+            self.mask_check_all_var.set(False)
+            return
+        all_checked = all(v.get() for v in self.mask_library_check_vars)
+        self.mask_check_all_var.set(all_checked)
+
+    def _on_toggle_mask_check_all(self) -> None:
+        val = bool(self.mask_check_all_var.get())
+        for v in self.mask_library_check_vars:
+            v.set(val)
+
     def _load_mask_library_to_input(self, show_message: bool = True) -> None:
         self.mask_library_catalog = []
         self.mask_library_check_vars = []
+        self.mask_check_all_var.set(False)
         if self.mask_library_container is not None:
             for child in self.mask_library_container.winfo_children():
                 child.destroy()
@@ -1504,7 +1590,7 @@ class CapCutGui:
 
         if self.mask_library_container is not None:
             for idx, item in enumerate(candidates):
-                v = tk.BooleanVar(value=True)
+                v = tk.BooleanVar(value=False)
                 src = str(item.get("source") or "")
                 prefix = f"[{src}] " if src else ""
                 display_name = str(item.get("display_name") or item.get("name") or "")
@@ -1517,6 +1603,7 @@ class CapCutGui:
                     self.mask_library_container,
                     text=label,
                     variable=v,
+                    command=self._on_toggle_mask_item,
                     style="Transition.TCheckbutton",
                 )
                 cb.grid(row=idx, column=0, sticky="w", padx=(0, 8), pady=(0, 2))
@@ -1558,10 +1645,8 @@ class CapCutGui:
         selected_library_paths = self._get_selected_mask_library_paths()
 
         if not selected_library_paths and not manual_paths:
-            # fallback an toàn: nếu user chưa tick gì, tự dùng toàn bộ background trong library hiện tại
-            selected_library_paths = [str(x.get("path") or "").strip() for x in self.mask_library_catalog if str(x.get("path") or "").strip()]
-            if selected_library_paths:
-                self._append_log(f"[MASK] no background selected -> auto_use_library={len(selected_library_paths)}\n")
+            messagebox.showerror("Thiếu background", "Chưa chọn background mask nào.")
+            return None
 
         bg_paths: list[str] = []
         seen: set[str] = set()
@@ -1927,7 +2012,10 @@ class CapCutGui:
             self._set_status("Không tìm thấy thư mục dự án CapCut", "warning")
             return
 
-        entries = sorted(item for item in DEFAULT_CAPCUT_PROJECT_ROOT.iterdir() if item.is_dir())
+        entries = sorted(
+            (item for item in DEFAULT_CAPCUT_PROJECT_ROOT.iterdir() if item.is_dir()),
+            key=lambda p: (-p.stat().st_mtime, p.name.lower()),
+        )
         filtered: list[Path] = []
         skipped = 0
         for entry in entries:
