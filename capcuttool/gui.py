@@ -1507,8 +1507,12 @@ class CapCutGui:
                 v = tk.BooleanVar(value=True)
                 src = str(item.get("source") or "")
                 prefix = f"[{src}] " if src else ""
-                # UI ưu tiên tên dễ đọc, ẩn hash/path để user chọn theo tên background.
-                label = f"{prefix}{item['name']}"
+                display_name = str(item.get("display_name") or item.get("name") or "")
+                raw_name = str(item.get("name") or "")
+                if display_name and display_name != raw_name:
+                    label = f"{prefix}{display_name} ({raw_name})"
+                else:
+                    label = f"{prefix}{raw_name}"
                 cb = ttk.Checkbutton(
                     self.mask_library_container,
                     text=label,
