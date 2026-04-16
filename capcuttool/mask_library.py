@@ -694,6 +694,22 @@ def load_mask_background_library(cache_root: Path | None = None) -> list[dict[st
     # Luôn seed pack nhúng để mang EXE sang máy khác vẫn có background dùng ngay.
     seed_mask_background_cache(cache_root=cache_root)
 
+    # Nếu pack nhúng ít item, auto-augment từ onlineMaterial hiện có để người dùng thấy đủ danh mục.
+    embedded_count = len(_iter_video_files(cache_root))
+    if embedded_count < 10:
+        try:
+            cache_root.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        for src in _iter_video_files_recursive(DEFAULT_ONLINE_MATERIAL_ROOT, max_items=4000):
+            dst = cache_root / src.name
+            if dst.exists() and dst.stat().st_size > 0:
+                continue
+            try:
+                shutil.copy2(src, dst)
+            except Exception:
+                continue
+
     embedded_videos = _iter_video_files(cache_root)
     embedded_name_map: dict[str, str] = {}
     for p in embedded_videos:
