@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -253,8 +254,8 @@ def _resolve_background_path_for_capcut(path_str: str) -> str:
     if not p.name:
         return str(p).replace("\\", "/")
 
-    # Khi source từ embedded-pack, ưu tiên trỏ về onlineMaterial gốc nếu có
-    # để tránh case CapCut báo media unsupported ở một số project.
+    # Khi source từ embedded-pack, ưu tiên/ép trỏ về onlineMaterial để tránh
+    # case CapCut báo media unsupported ở một số project.
     try:
         lower_parts = [x.lower() for x in p.parts]
     except Exception:
@@ -265,6 +266,17 @@ def _resolve_background_path_for_capcut(path_str: str) -> str:
         if cand.exists() and cand.is_file():
             return str(cand).replace("\\", "/")
 
+        # Không có trong onlineMaterial thì tự copy sang đó.
+        try:
+            _DEFAULT_ONLINE_MATERIAL_ROOT.mkdir(parents=True, exist_ok=True)
+            if p.exists() and p.is_file():
+                shutil.copy2(p, cand)
+                if cand.exists() and cand.is_file():
+                    return str(cand).replace("\\", "/")
+        except Exception:
+            pass
+
+        # Fallback: dò theo tên trong onlineMaterial (nếu có bản khác thư mục con).
         try:
             for hit in _DEFAULT_ONLINE_MATERIAL_ROOT.rglob(p.name):
                 if hit.is_file():
