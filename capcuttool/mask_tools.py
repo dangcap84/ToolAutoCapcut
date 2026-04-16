@@ -137,10 +137,12 @@ def _build_combination_material(
     vm["id"] = _new_id()
     vm["type"] = "video"
     vm["path"] = ""
+    vm["media_path"] = ""
     vm["material_id"] = ""
     vm["extra_type_option"] = 2
     vm["duration"] = int(total_duration_us)
     vm["material_name"] = "Clip ghép mask"
+    vm["has_audio"] = bool(vm.get("has_audio", True))
     return vm
 
 
@@ -149,11 +151,22 @@ def _build_draft_material(
     base_before_mask: dict[str, Any],
     total_duration_us: int,
     template_draft_material: dict[str, Any] | None,
+    combination_video_id: str,
 ) -> dict[str, Any]:
     dm = _clone(template_draft_material)
     dm["id"] = _new_id()
     dm["type"] = "combination"
     dm.setdefault("combination_type", "none")
+    dm.setdefault("name", "Clip ghép mask")
+    dm.setdefault("category_id", "")
+    dm.setdefault("category_name", "")
+    dm.setdefault("formula_id", "")
+    dm.setdefault("draft_file_path", "")
+    dm.setdefault("draft_cover_path", "")
+    dm.setdefault("draft_config_path", "")
+    dm.setdefault("precompile_combination", False)
+    dm.setdefault("aimusic_mv_template_info", "")
+    dm["combination_id"] = str(combination_video_id or "")
 
     # Luôn lấy draft hiện tại của project làm base để tránh bị kéo media/template
     # từ project mẫu (vd Test1-mask) sang project đích.
@@ -352,6 +365,7 @@ def apply_mask_to_draft(
         base_before_mask=base_before_mask,
         total_duration_us=total_duration_us,
         template_draft_material=template_draft_material,
+        combination_video_id=str(comb_video.get("id") or ""),
     )
     drafts.append(comb_draft)
 
@@ -368,7 +382,7 @@ def apply_mask_to_draft(
     bg_paths = [str(Path(p)).replace("\\", "/") for p in background_paths if str(p).strip()]
     bg_added = _register_background_catalog(bg_paths, background_catalog_path)
 
-    seg_support_refs = _ensure_segment_support_refs(materials)
+    seg_support_refs = _ensure_segment_support_refs(materials, include_mask_id=mask_mat["id"])
 
     if bg_paths:
         seg_template = _clone(main_segments[0])
