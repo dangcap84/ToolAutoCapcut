@@ -533,22 +533,31 @@ def apply_mask_to_draft(
             bg_ids.append(vm["id"])
 
         rebuilt: list[dict[str, Any]] = []
-        cursor = 0
         for idx, old_seg in enumerate(main_segments):
-            dur = int(((old_seg.get("target_timerange") or {}).get("duration") or 0))
+            old_target = old_seg.get("target_timerange") if isinstance(old_seg, dict) else {}
+            old_source = old_seg.get("source_timerange") if isinstance(old_seg, dict) else {}
+
+            start = int((old_target or {}).get("start") or 0)
+            dur = int((old_target or {}).get("duration") or 0)
             dur = max(1, dur)
+
+            src_start = int((old_source or {}).get("start") or 0)
+            src_dur = int((old_source or {}).get("duration") or 0)
+            if src_dur <= 0:
+                src_dur = dur
+
             seg = _clone(seg_template)
             seg["id"] = _new_id()
             seg["material_id"] = bg_ids[idx % len(bg_ids)]
-            seg["target_timerange"] = {"start": int(cursor), "duration": int(dur)}
-            seg["source_timerange"] = {"start": 0, "duration": int(dur)}
+            # Giữ nguyên timing của từng segment theo project gốc (không nén timeline).
+            seg["target_timerange"] = {"start": int(start), "duration": int(dur)}
+            seg["source_timerange"] = {"start": int(src_start), "duration": int(src_dur)}
             seg["render_index"] = 0
             seg["track_render_index"] = 0
             seg["enable_video_mask"] = True
             seg["enable_adjust_mask"] = True
             seg["extra_material_refs"] = list(seg_support_refs)
             rebuilt.append(seg)
-            cursor += dur
 
         main_track["segments"] = rebuilt
     else:
