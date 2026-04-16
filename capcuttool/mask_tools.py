@@ -107,21 +107,43 @@ def _build_mask_material(
 ) -> dict[str, Any]:
     obj = _clone(template_mask)
     if not obj:
+        # Fallback schema gần với draft thật của CapCut để UI mask có thể chọn shape,
+        # chỉnh size/position ổn định ngay cả khi không có template Test1-mask.
         obj = {
             "id": "",
             "type": "mask",
             "name": "Hình chữ nhật",
             "resource_type": "rectangle",
             "resource_id": "7374021450748924432",
+            "category": "",
+            "category_id": "",
+            "category_name": "",
+            "constant_material_id": "",
+            "contour_path": "",
+            "loader_work_space": "",
+            "panel": "",
+            "path": "",
+            "platform": 0,
+            "position_info": "",
+            "source_platform": 0,
+            "text_config": "",
+            "track_segment": "",
+            "is_old_version": False,
             "config": {},
         }
 
     obj["id"] = _new_id()
     obj["type"] = "mask"
     obj.setdefault("name", "Hình chữ nhật")
+    obj.setdefault("resource_type", "rectangle")
+    obj.setdefault("resource_id", "7374021450748924432")
+
     cfg = obj.get("config") if isinstance(obj.get("config"), dict) else {}
-    cfg["width"] = max(0.01, min(1.0, float(overlay_width) / float(canvas_w)))
-    cfg["height"] = max(0.01, min(1.0, float(overlay_height) / float(canvas_h)))
+    w_norm = max(0.01, min(1.0, float(overlay_width) / float(canvas_w)))
+    h_norm = max(0.01, min(1.0, float(overlay_height) / float(canvas_h)))
+    cfg["width"] = w_norm
+    cfg["height"] = h_norm
+    cfg["aspectRatio"] = float(w_norm / max(1e-6, h_norm))
     cfg.setdefault("centerX", 0.0)
     cfg.setdefault("centerY", 0.0)
     cfg.setdefault("rotation", 0.0)
