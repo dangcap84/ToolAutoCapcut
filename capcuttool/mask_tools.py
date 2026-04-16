@@ -164,10 +164,18 @@ def _build_combination_material(
     vm["id"] = _new_id()
     vm["type"] = "video"
     vm["path"] = ""
+    vm["media_path"] = ""
     vm["material_id"] = ""
+    vm["origin_material_id"] = ""
+    vm["local_material_id"] = ""
+    vm["local_id"] = ""
     vm["extra_type_option"] = 2
     vm["duration"] = int(total_duration_us)
     vm["material_name"] = "Clip ghép mask"
+    vm.setdefault("has_audio", True)
+    vm.setdefault("source_platform", 0)
+    vm.setdefault("category_id", "")
+    vm.setdefault("category_name", "")
     return vm
 
 
@@ -181,6 +189,16 @@ def _build_draft_material(
     dm["id"] = _new_id()
     dm["type"] = "combination"
     dm.setdefault("combination_type", "none")
+    dm.setdefault("combination_id", "")
+    dm.setdefault("name", "Clip ghép mask")
+    dm.setdefault("category_id", "")
+    dm.setdefault("category_name", "")
+    dm.setdefault("formula_id", "")
+    dm.setdefault("draft_file_path", "")
+    dm.setdefault("draft_cover_path", "")
+    dm.setdefault("draft_config_path", "")
+    dm.setdefault("precompile_combination", False)
+    dm.setdefault("aimusic_mv_template_info", "")
 
     # Luôn lấy draft hiện tại của project làm base để tránh bị kéo media/template
     # từ project mẫu (vd Test1-mask) sang project đích.
@@ -343,6 +361,21 @@ def _register_background_catalog(paths: list[str], catalog_path: Path | None) ->
     return added
 
 
+def _prune_existing_mask_overlay(draft: dict[str, Any]) -> None:
+    if not isinstance(draft, dict):
+        return
+    tracks = draft.get("tracks")
+    if not isinstance(tracks, list):
+        return
+
+    # Xóa overlay mask track cũ (flag=2) để tránh chồng/refs stale.
+    draft["tracks"] = [
+        tr
+        for tr in tracks
+        if not (isinstance(tr, dict) and str(tr.get("type") or "").lower() == "video" and int(tr.get("flag") or 0) == 2)
+    ]
+
+
 def apply_mask_to_draft(
     draft: dict[str, Any],
     *,
@@ -371,6 +404,8 @@ def apply_mask_to_draft(
     if not isinstance(materials, dict):
         materials = {}
         draft["materials"] = materials
+
+    _prune_existing_mask_overlay(draft)
 
     base_before_mask = copy.deepcopy(draft)
 
@@ -418,6 +453,8 @@ def apply_mask_to_draft(
         total_duration_us=total_duration_us,
         template_draft_material=template_draft_material,
     )
+    # Liên kết 2 chiều để CapCut nhận combination material ổn định.
+    comb_draft["combination_id"] = str(comb_video.get("id") or "")
     drafts.append(comb_draft)
 
     mask_mat = _build_mask_material(
@@ -437,7 +474,7 @@ def apply_mask_to_draft(
     ]
     bg_added = _register_background_catalog(bg_paths, background_catalog_path)
 
-    seg_support_refs = _ensure_segment_support_refs(materials)
+    seg_support_refs = _ensure_segment_support_refs(materials, include_mask_id=mask_mat["id"])
 
     if bg_paths:
         seg_template = _clone(main_segments[0])
@@ -481,6 +518,7 @@ def apply_mask_to_draft(
             seg["render_index"] = 0
             seg["track_render_index"] = 0
             seg["enable_video_mask"] = True
+            seg["enable_adjust_mask"] = True
             seg["extra_material_refs"] = list(seg_support_refs)
             rebuilt.append(seg)
             cursor += dur
@@ -490,6 +528,7 @@ def apply_mask_to_draft(
         for seg in main_segments:
             if isinstance(seg, dict):
                 seg["enable_video_mask"] = True
+                seg["enable_adjust_mask"] = True
                 seg["extra_material_refs"] = list(seg_support_refs)
 
     # 2) tạo track trên cùng chứa 1 clip combination + mask.
@@ -503,6 +542,7 @@ def apply_mask_to_draft(
     top_seg["render_index"] = 1
     top_seg["track_render_index"] = 1
     top_seg["enable_video_mask"] = True
+    top_seg["enable_adjust_mask"] = True
 
     refs = _ensure_segment_support_refs(materials, include_mask_id=mask_mat["id"], include_draft_id=comb_draft["id"])
     top_seg["extra_material_refs"] = refs
