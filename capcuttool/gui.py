@@ -72,7 +72,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.52")
+        self.root.title("CapCut Sync v3.9.53")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -561,10 +561,10 @@ class CapCutGui:
         mask_lib_host.grid(row=6, column=0, columnspan=3, sticky=NSEW)
         mask_lib_host.columnconfigure(0, weight=1)
         mask_lib_host.rowconfigure(0, weight=1)
-        mask_lib_host.configure(height=88)
+        mask_lib_host.configure(height=130)
         mask_lib_host.grid_propagate(False)
 
-        mask_lib_canvas = tk.Canvas(mask_lib_host, background=PANEL_2, highlightthickness=0, bd=0, height=88)
+        mask_lib_canvas = tk.Canvas(mask_lib_host, background=PANEL_2, highlightthickness=0, bd=0, height=130)
         mask_lib_canvas.grid(row=0, column=0, sticky=NSEW)
         mask_lib_scroll = tk.Scrollbar(mask_lib_host, orient="vertical", command=mask_lib_canvas.yview, width=14, relief="raised")
         mask_lib_scroll.grid(row=0, column=1, sticky="ns")
@@ -1610,14 +1610,15 @@ class CapCutGui:
                     label = f"{prefix}{display_name} ({raw_name})"
                 else:
                     label = f"{prefix}{raw_name}"
+                short_label = label if len(label) <= 72 else (label[:69] + "...")
                 cb = ttk.Checkbutton(
                     self.mask_library_container,
-                    text=label,
+                    text=short_label,
                     variable=v,
                     command=self._on_toggle_mask_item,
                     style="Transition.TCheckbutton",
                 )
-                cb.grid(row=idx, column=0, sticky="w", padx=(12, 8), pady=(0, 2))
+                cb.grid(row=idx, column=0, sticky="ew", padx=(12, 8), pady=(0, 2))
                 self.mask_library_check_vars.append(v)
 
         self._append_log(f"[MASK] library_loaded={len(candidates)} (favorite/name mode)\n")

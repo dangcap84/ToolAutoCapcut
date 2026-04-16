@@ -169,15 +169,17 @@ def _build_mask_material(
     h_norm = max(0.01, float(overlay_height) / float(canvas_h))
     cfg["width"] = w_norm
     cfg["height"] = h_norm
-    # Giữ ổn định như project chuẩn: aspectRatio mặc định 1.0, không ép theo W/H.
-    cfg["aspectRatio"] = float(cfg.get("aspectRatio") or 1.0)
+    # Giữ đúng tỷ lệ theo input W/H để kích thước hiển thị khớp thiết lập.
+    cfg["aspectRatio"] = float(w_norm / max(1e-6, h_norm))
     cfg.setdefault("centerX", 0.0)
     cfg.setdefault("centerY", 0.0)
     cfg.setdefault("rotation", 0.0)
     cfg.setdefault("feather", 0.0)
     cfg.setdefault("expansion", 0.0)
     cfg.setdefault("invert", False)
-    cfg["roundCorner"] = max(0.0, min(100.0, float(round_corner)))
+    # CapCut lưu roundCorner theo thang 0..1, còn UI người dùng nhập 0..100.
+    # Ví dụ nhập 20 => lưu 0.2 để khi mở CapCut hiển thị đúng 20.
+    cfg["roundCorner"] = max(0.0, min(100.0, float(round_corner))) / 100.0
     obj["config"] = cfg
     return obj
 
