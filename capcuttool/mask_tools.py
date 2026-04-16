@@ -14,6 +14,13 @@ _DEFAULT_ONLINE_MATERIAL_ROOT = Path(
     os.environ.get("USERPROFILE", "C:/Users/Admin")
 ) / "AppData" / "Local" / "CapCut" / "User Data" / "Cache" / "onlineMaterial"
 
+# Baseline thực tế rút ra từ project mask chuẩn (Test1-mask):
+# 1800px -> width 1.2784090909 => base_w ~= 1408
+#  928px -> height 1.2083333333 => base_h ~= 768
+# Dùng baseline này giúp size khớp UI CapCut khi chỉnh mask.
+_MASK_BASELINE_W = 1408.0
+_MASK_BASELINE_H = 768.0
+
 
 def _new_id() -> str:
     return str(uuid4()).upper()
@@ -164,9 +171,10 @@ def _build_mask_material(
     obj.setdefault("is_old_version", False)
 
     cfg = obj.get("config") if isinstance(obj.get("config"), dict) else {}
-    # Không clamp max=1.0 vì project thực tế có width > 1.0 và CapCut vẫn xử lý bình thường.
-    w_norm = max(0.01, float(overlay_width) / float(canvas_w))
-    h_norm = max(0.01, float(overlay_height) / float(canvas_h))
+    # Chuẩn hóa theo baseline mask-space để khớp behavior project mask chuẩn.
+    # (Không clamp max=1.0 vì có case width/height > 1.0 vẫn hợp lệ.)
+    w_norm = max(0.01, float(overlay_width) / _MASK_BASELINE_W)
+    h_norm = max(0.01, float(overlay_height) / _MASK_BASELINE_H)
     cfg["width"] = w_norm
     cfg["height"] = h_norm
     # Giữ đúng tỷ lệ theo input W/H để kích thước hiển thị khớp thiết lập.
@@ -177,9 +185,9 @@ def _build_mask_material(
     cfg.setdefault("feather", 0.0)
     cfg.setdefault("expansion", 0.0)
     cfg.setdefault("invert", False)
-    # CapCut lưu roundCorner theo thang 0..1, còn UI người dùng nhập 0..100.
-    # Ví dụ nhập 20 => lưu 0.2 để khi mở CapCut hiển thị đúng 20.
-    cfg["roundCorner"] = max(0.0, min(100.0, float(round_corner))) / 100.0
+    # CapCut lưu roundCorner theo thang 0..1. Chuẩn hóa chắc chắn để tránh stale dữ liệu.
+    rc = max(0.0, min(100.0, float(round_corner))) / 100.0
+    cfg["roundCorner"] = rc
     obj["config"] = cfg
     return obj
 
