@@ -682,15 +682,29 @@ def _collect_favorite_background_items_from_projects(projects_root: Path = DEFAU
 
 def load_mask_background_library(cache_root: Path | None = None) -> list[dict[str, Any]]:
     """
-    Trả danh sách background gồm:
-    1) Favorite (nếu tìm được) ở đầu danh sách.
-    2) Toàn bộ catalog onlineMaterial bên dưới để user luôn thấy full danh mục.
+    Trả danh sách background theo thứ tự ưu tiên portable:
+    1) embedded-pack (đã seed từ file nhúng trong EXE)
+    2) catalog local đã lưu
+    3) favorite từ project/cache CapCut
+    4) onlineMaterial scan đầy đủ
     """
     if cache_root is None:
         cache_root = DEFAULT_MASK_BG_CACHE_ROOT
 
-    # vẫn seed pack vào cache để backward-compatible, nhưng KHÔNG đưa vào library mặc định
+    # Luôn seed pack nhúng để mang EXE sang máy khác vẫn có background dùng ngay.
     seed_mask_background_cache(cache_root=cache_root)
+
+    embedded_videos = _iter_video_files(cache_root)
+    embedded_name_map: dict[str, str] = {}
+    for p in embedded_videos:
+        pretty = re.sub(r"\s+", " ", p.stem.replace("_", " ").replace("-", " ")).strip().title()
+        if pretty:
+            embedded_name_map[p.name.lower()] = pretty
+    embedded_items = _library_from_paths(
+        embedded_videos,
+        source="embedded-pack",
+        display_name_by_basename=embedded_name_map,
+    )
 
     name_map = {k.lower(): v for k, v in DEFAULT_ONLINE_MATERIAL_NAME_MAP.items()}
     name_map.update(_collect_online_material_display_name_map())
@@ -707,17 +721,17 @@ def load_mask_background_library(cache_root: Path | None = None) -> list[dict[st
         display_name_by_basename=name_map,
     )
 
-    # Gộp catalog cố định + favorite + full onlineMaterial, không trùng path.
+    # Gộp theo thứ tự ưu tiên, không trùng path.
     out: list[dict[str, Any]] = []
     seen_path: set[str] = set()
 
-    for item in [*catalog_items, *favorite_items, *online_items]:
+    for item in [*embedded_items, *catalog_items, *favorite_items, *online_items]:
         p = str(item.get("path") or "").strip().lower()
         if not p or p in seen_path:
             continue
         seen_path.add(p)
         out.append(item)
 
-    # persist catalog kiểu transition: lần sau mở tool vẫn có danh mục đã học được.
+    # Lưu catalog để mở lần sau vẫn giữ danh mục đã tổng hợp.
     _save_mask_background_catalog(out)
     return out
