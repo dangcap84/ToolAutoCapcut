@@ -157,9 +157,15 @@ def _build_mask_material(
     obj.setdefault("resource_type", "rectangle")
     obj.setdefault("resource_id", "7374021450748924432")
 
+    obj.setdefault("category", "video")
+    obj.setdefault("platform", "all")
+    obj.setdefault("source_platform", 0)
+    obj.setdefault("is_old_version", False)
+
     cfg = obj.get("config") if isinstance(obj.get("config"), dict) else {}
-    w_norm = max(0.01, min(1.0, float(overlay_width) / float(canvas_w)))
-    h_norm = max(0.01, min(1.0, float(overlay_height) / float(canvas_h)))
+    # Không clamp max=1.0 vì project thực tế có width > 1.0 và CapCut vẫn xử lý bình thường.
+    w_norm = max(0.01, float(overlay_width) / float(canvas_w))
+    h_norm = max(0.01, float(overlay_height) / float(canvas_h))
     cfg["width"] = w_norm
     cfg["height"] = h_norm
     cfg["aspectRatio"] = float(w_norm / max(1e-6, h_norm))
@@ -296,10 +302,12 @@ def _ensure_segment_support_refs(materials: dict[str, Any], include_mask_id: str
 
     refs.append(_ensure_support_material(materials, "speeds", {"type": "speed", "speed": 1.0, "mode": 0, "curve_speed": None}))
     refs.append(_ensure_support_material(materials, "placeholder_infos", {"type": "placeholder_info", "error_path": "", "error_text": "", "meta_type": "none", "res_path": "", "res_text": ""}))
-    refs.append(_ensure_support_material(materials, "canvases", {"type": "canvas_color", "color": "", "image": "", "image_id": "", "image_name": "", "blur": 0.0, "album_image": "", "source_platform": 0, "team_id": ""}))
 
+    # Giữ thứ tự refs khớp project mask chuẩn: draft,speed,placeholder,mask,canvas,...
     if include_mask_id:
         refs.append(include_mask_id)
+
+    refs.append(_ensure_support_material(materials, "canvases", {"type": "canvas_color", "color": "", "image": "", "image_id": "", "image_name": "", "blur": 0.0, "album_image": "", "source_platform": 0, "team_id": ""}))
 
     refs.append(_ensure_support_material(materials, "sound_channel_mappings", {"type": "none", "audio_channel_mapping": 0, "is_config_open": False}))
     refs.append(_ensure_support_material(materials, "material_colors", {"solid_color": "", "is_gradient": False, "gradient_angle": 90.0, "gradient_colors": [], "gradient_percents": [], "is_color_clip": False, "width": 0.0, "height": 0.0}))
@@ -562,7 +570,7 @@ def apply_mask_to_draft(
     top_seg["target_timerange"] = {"start": 0, "duration": int(total_duration_us)}
     top_seg["source_timerange"] = {"start": 0, "duration": int(total_duration_us)}
     top_seg["render_index"] = 1
-    top_seg["track_render_index"] = 1
+    top_seg["track_render_index"] = 2
     top_seg["enable_video_mask"] = True
     top_seg["enable_adjust_mask"] = True
 
