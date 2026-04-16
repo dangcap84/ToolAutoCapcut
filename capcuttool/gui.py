@@ -72,7 +72,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.41")
+        self.root.title("CapCut Sync v3.9.42")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -575,8 +575,19 @@ class CapCutGui:
         def _sync_masklib_width(_event=None) -> None:
             mask_lib_canvas.itemconfigure(mask_lib_window, width=mask_lib_canvas.winfo_width())
 
+        def _on_masklib_mousewheel(event) -> str:
+            if event.delta == 0:
+                return "break"
+            delta = int(-1 * (event.delta / 120))
+            if delta == 0:
+                delta = -1 if event.delta > 0 else 1
+            mask_lib_canvas.yview_scroll(delta, "units")
+            return "break"
+
         self.mask_library_container.bind("<Configure>", _sync_masklib_scroll)
         mask_lib_canvas.bind("<Configure>", _sync_masklib_width)
+        mask_lib_canvas.bind("<Enter>", lambda _e: mask_lib_canvas.bind_all("<MouseWheel>", _on_masklib_mousewheel))
+        mask_lib_canvas.bind("<Leave>", lambda _e: mask_lib_canvas.unbind_all("<MouseWheel>"))
 
         right_panel = ttk.Frame(main_frame, style="Panel.TFrame")
         right_panel.grid(row=1, column=1, sticky=NSEW)

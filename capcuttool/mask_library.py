@@ -90,12 +90,7 @@ def _best_effort_display_name(display_name: str, fallback_filename: str) -> str:
     if _is_readable_display_name(preferred, fallback_filename):
         return preferred
 
-    stem_raw = Path(fallback_filename or "").stem
-    stem = stem_raw.replace("_", " ").replace("-", " ").strip()
-    if _is_readable_display_name(stem, fallback_filename):
-        return stem
-
-    # Không có tên chuẩn thì loại khỏi catalog.
+    # Không có tên chuẩn thì loại khỏi catalog (không fallback theo filename).
     return ""
 
 
