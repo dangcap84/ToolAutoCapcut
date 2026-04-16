@@ -710,20 +710,21 @@ def load_mask_background_library(cache_root: Path | None = None) -> list[dict[st
             except Exception:
                 continue
 
+    name_map = {k.lower(): v for k, v in DEFAULT_ONLINE_MATERIAL_NAME_MAP.items()}
+    name_map.update(_collect_online_material_display_name_map())
+
     embedded_videos = _iter_video_files(cache_root)
     embedded_name_map: dict[str, str] = {}
     for p in embedded_videos:
-        pretty = re.sub(r"\s+", " ", p.stem.replace("_", " ").replace("-", " ")).strip().title()
-        if pretty:
-            embedded_name_map[p.name.lower()] = pretty
+        key = p.name.lower()
+        mapped = _best_effort_display_name(name_map.get(key, ""), p.name)
+        if mapped:
+            embedded_name_map[key] = mapped
     embedded_items = _library_from_paths(
         embedded_videos,
         source="embedded-pack",
         display_name_by_basename=embedded_name_map,
     )
-
-    name_map = {k.lower(): v for k, v in DEFAULT_ONLINE_MATERIAL_NAME_MAP.items()}
-    name_map.update(_collect_online_material_display_name_map())
 
     catalog_items = _load_mask_background_catalog()
 
