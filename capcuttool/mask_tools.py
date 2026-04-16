@@ -120,6 +120,7 @@ def _build_mask_material(
     *,
     overlay_width: float,
     overlay_height: float,
+    round_corner: float,
     canvas_w: float,
     canvas_h: float,
     template_mask: dict[str, Any] | None,
@@ -168,14 +169,15 @@ def _build_mask_material(
     h_norm = max(0.01, float(overlay_height) / float(canvas_h))
     cfg["width"] = w_norm
     cfg["height"] = h_norm
-    cfg["aspectRatio"] = float(w_norm / max(1e-6, h_norm))
+    # Giữ ổn định như project chuẩn: aspectRatio mặc định 1.0, không ép theo W/H.
+    cfg["aspectRatio"] = float(cfg.get("aspectRatio") or 1.0)
     cfg.setdefault("centerX", 0.0)
     cfg.setdefault("centerY", 0.0)
     cfg.setdefault("rotation", 0.0)
     cfg.setdefault("feather", 0.0)
     cfg.setdefault("expansion", 0.0)
     cfg.setdefault("invert", False)
-    cfg.setdefault("roundCorner", 0.0)
+    cfg["roundCorner"] = max(0.0, min(100.0, float(round_corner)))
     obj["config"] = cfg
     return obj
 
@@ -408,6 +410,7 @@ def apply_mask_to_draft(
     *,
     overlay_width: float,
     overlay_height: float,
+    round_corner: float = 20.0,
     background_paths: list[str],
     template_draft: dict[str, Any] | None,
     background_catalog_path: Path | None,
@@ -487,6 +490,7 @@ def apply_mask_to_draft(
     mask_mat = _build_mask_material(
         overlay_width=overlay_width,
         overlay_height=overlay_height,
+        round_corner=round_corner,
         canvas_w=canvas_w,
         canvas_h=canvas_h,
         template_mask=template_mask,
