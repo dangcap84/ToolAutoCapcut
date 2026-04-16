@@ -55,6 +55,25 @@ def _select_main_video_track(draft: dict[str, Any]) -> dict[str, Any] | None:
     return candidates[0][1]
 
 
+def _find_video_track_segment(draft: dict[str, Any] | None, *, flag: int) -> dict[str, Any] | None:
+    if not isinstance(draft, dict):
+        return None
+    tracks = draft.get("tracks")
+    if not isinstance(tracks, list):
+        return None
+    for tr in tracks:
+        if not isinstance(tr, dict):
+            continue
+        if str(tr.get("type") or "").lower() != "video":
+            continue
+        if int(tr.get("flag") or 0) != int(flag):
+            continue
+        segs = tr.get("segments")
+        if isinstance(segs, list) and segs and isinstance(segs[0], dict):
+            return _clone(segs[0])
+    return None
+
+
 def _ensure_video_track(draft: dict[str, Any], *, flag: int) -> dict[str, Any]:
     tracks = draft.get("tracks")
     if not isinstance(tracks, list):
@@ -533,8 +552,11 @@ def apply_mask_to_draft(
 
     # 2) tạo track trên cùng chứa 1 clip combination + mask.
     top_track = _ensure_video_track(draft, flag=2)
-    base_seg = _clone(main_segments[0])
-    top_seg = _clone(base_seg)
+
+    # Ưu tiên schema segment từ template flag=2 để đảm bảo mask editable (shape/size).
+    # Nếu không có template thì mới fallback từ main segment và reset các trường dễ gây nhiễu.
+    template_top_seg = _find_video_track_segment(template_draft, flag=2)
+    top_seg = _clone(template_top_seg) if isinstance(template_top_seg, dict) else _clone(main_segments[0])
     top_seg["id"] = _new_id()
     top_seg["material_id"] = comb_video["id"]
     top_seg["target_timerange"] = {"start": 0, "duration": int(total_duration_us)}
@@ -543,6 +565,19 @@ def apply_mask_to_draft(
     top_seg["track_render_index"] = 1
     top_seg["enable_video_mask"] = True
     top_seg["enable_adjust_mask"] = True
+
+    # reset các cấu phần có thể khiến CapCut coi segment là clip đã bake keyframe,
+    # từ đó không cho chỉnh shape/size mask như mong muốn.
+    top_seg["clip"] = {
+        "alpha": 1.0,
+        "flip": {"horizontal": False, "vertical": False},
+        "rotation": 0.0,
+        "scale": {"x": 1.0, "y": 1.0},
+        "transform": {"x": 0.0, "y": 0.0},
+    }
+    top_seg["common_keyframes"] = []
+    top_seg["keyframe_refs"] = []
+    top_seg["enable_adjust_mask"] = False
 
     refs = _ensure_segment_support_refs(materials, include_mask_id=mask_mat["id"], include_draft_id=comb_draft["id"])
     top_seg["extra_material_refs"] = refs
