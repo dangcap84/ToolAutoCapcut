@@ -682,36 +682,16 @@ def _collect_favorite_background_items_from_projects(projects_root: Path = DEFAU
 
 def load_mask_background_library(cache_root: Path | None = None) -> list[dict[str, Any]]:
     """
-    Trả danh sách background theo thứ tự ưu tiên portable:
-    1) embedded-pack (đã seed từ file nhúng trong EXE)
-    2) catalog local đã lưu
-    3) favorite từ project/cache CapCut
-    4) onlineMaterial scan đầy đủ
+    Chỉ load danh sách từ embedded-pack đã nhúng trong EXE.
+    Không lấy thêm từ catalog/favorite/onlineMaterial.
     """
     if cache_root is None:
         cache_root = DEFAULT_MASK_BG_CACHE_ROOT
 
-    # Luôn seed pack nhúng để mang EXE sang máy khác vẫn có background dùng ngay.
+    # Seed pack nhúng ra cache runtime.
     seed_mask_background_cache(cache_root=cache_root)
 
-    # Nếu pack nhúng ít item, auto-augment từ onlineMaterial hiện có để người dùng thấy đủ danh mục.
-    embedded_count = len(_iter_video_files(cache_root))
-    if embedded_count < 10:
-        try:
-            cache_root.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-        for src in _iter_video_files_recursive(DEFAULT_ONLINE_MATERIAL_ROOT, max_items=4000):
-            dst = cache_root / src.name
-            if dst.exists() and dst.stat().st_size > 0:
-                continue
-            try:
-                shutil.copy2(src, dst)
-            except Exception:
-                continue
-
     name_map = {k.lower(): v for k, v in DEFAULT_ONLINE_MATERIAL_NAME_MAP.items()}
-    name_map.update(_collect_online_material_display_name_map())
 
     embedded_videos = _iter_video_files(cache_root)
     embedded_name_map: dict[str, str] = {}
@@ -720,35 +700,13 @@ def load_mask_background_library(cache_root: Path | None = None) -> list[dict[st
         mapped = _best_effort_display_name(name_map.get(key, ""), p.name)
         if mapped:
             embedded_name_map[key] = mapped
-    embedded_items = _library_from_paths(
+
+    out = _library_from_paths(
         embedded_videos,
         source="embedded-pack",
         display_name_by_basename=embedded_name_map,
     )
 
-    catalog_items = _load_mask_background_catalog()
-
-    global_fav_ids = _collect_global_favorite_material_ids()
-    favorite_items = _collect_favorite_background_items_from_projects(global_favorite_ids=global_fav_ids)
-
-    online_videos = _iter_video_files_recursive(DEFAULT_ONLINE_MATERIAL_ROOT, max_items=4000)
-    online_items = _library_from_paths(
-        online_videos,
-        source="onlineMaterial",
-        display_name_by_basename=name_map,
-    )
-
-    # Gộp theo thứ tự ưu tiên, không trùng path.
-    out: list[dict[str, Any]] = []
-    seen_path: set[str] = set()
-
-    for item in [*embedded_items, *catalog_items, *favorite_items, *online_items]:
-        p = str(item.get("path") or "").strip().lower()
-        if not p or p in seen_path:
-            continue
-        seen_path.add(p)
-        out.append(item)
-
-    # Lưu catalog để mở lần sau vẫn giữ danh mục đã tổng hợp.
+    # Persist chỉ đúng danh sách embedded để lần sau giữ nguyên.
     _save_mask_background_catalog(out)
     return out
