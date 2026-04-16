@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 _VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
+_DEFAULT_ONLINE_MATERIAL_ROOT = Path(
+    os.environ.get("USERPROFILE", "C:/Users/Admin")
+) / "AppData" / "Local" / "CapCut" / "User Data" / "Cache" / "onlineMaterial"
 
 
 def _new_id() -> str:
@@ -244,6 +248,33 @@ def _ensure_segment_support_refs(materials: dict[str, Any], include_mask_id: str
     return refs
 
 
+def _resolve_background_path_for_capcut(path_str: str) -> str:
+    p = Path(path_str)
+    if not p.name:
+        return str(p).replace("\\", "/")
+
+    # Khi source từ embedded-pack, ưu tiên trỏ về onlineMaterial gốc nếu có
+    # để tránh case CapCut báo media unsupported ở một số project.
+    try:
+        lower_parts = [x.lower() for x in p.parts]
+    except Exception:
+        lower_parts = []
+
+    if "mask_background_pack" in lower_parts:
+        cand = _DEFAULT_ONLINE_MATERIAL_ROOT / p.name
+        if cand.exists() and cand.is_file():
+            return str(cand).replace("\\", "/")
+
+        try:
+            for hit in _DEFAULT_ONLINE_MATERIAL_ROOT.rglob(p.name):
+                if hit.is_file():
+                    return str(hit).replace("\\", "/")
+        except Exception:
+            pass
+
+    return str(p).replace("\\", "/")
+
+
 def _register_background_catalog(paths: list[str], catalog_path: Path | None) -> int:
     if catalog_path is None:
         return 0
@@ -365,7 +396,11 @@ def apply_mask_to_draft(
     masks.append(mask_mat)
 
     # 1) line chính: thay bằng background nếu user có truyền vào.
-    bg_paths = [str(Path(p)).replace("\\", "/") for p in background_paths if str(p).strip()]
+    bg_paths = [
+        _resolve_background_path_for_capcut(str(p).strip())
+        for p in background_paths
+        if str(p).strip()
+    ]
     bg_added = _register_background_catalog(bg_paths, background_catalog_path)
 
     seg_support_refs = _ensure_segment_support_refs(materials)
