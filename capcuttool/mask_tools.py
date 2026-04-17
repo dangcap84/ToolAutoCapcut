@@ -421,6 +421,7 @@ def apply_mask_to_draft(
     overlay_width: float,
     overlay_height: float,
     round_corner: float = 20.0,
+    mask_scale_percent: float = 100.0,
     background_paths: list[str],
     template_draft: dict[str, Any] | None,
     background_catalog_path: Path | None,
@@ -599,11 +600,12 @@ def apply_mask_to_draft(
 
     # reset các cấu phần có thể khiến CapCut coi segment là clip đã bake keyframe,
     # từ đó không cho chỉnh shape/size mask như mong muốn.
+    mask_scale = max(1.0, min(300.0, float(mask_scale_percent))) / 100.0
     top_seg["clip"] = {
         "alpha": 1.0,
         "flip": {"horizontal": False, "vertical": False},
         "rotation": 0.0,
-        "scale": {"x": 1.0, "y": 1.0},
+        "scale": {"x": float(mask_scale), "y": float(mask_scale)},
         "transform": {"x": 0.0, "y": 0.0},
     }
     top_seg["common_keyframes"] = []

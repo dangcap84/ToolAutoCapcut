@@ -72,7 +72,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.54")
+        self.root.title("CapCut Sync v3.9.55")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -214,6 +214,7 @@ class CapCutGui:
         self.mask_overlay_width_var = tk.StringVar(value="1800")
         self.mask_overlay_height_var = tk.StringVar(value="928")
         self.mask_round_corner_var = tk.StringVar(value="20")
+        self.mask_scale_percent_var = tk.StringVar(value="90")
         self.mask_backgrounds_var = tk.StringVar(value="")
         self.mask_library_catalog: list[dict] = []
         self.mask_library_check_vars: list[tk.BooleanVar] = []
@@ -529,7 +530,7 @@ class CapCutGui:
         )
         mask_card.grid(row=0, column=0, sticky=NSEW)
         mask_card.columnconfigure(1, weight=1)
-        mask_card.rowconfigure(6, weight=1)
+        mask_card.rowconfigure(7, weight=1)
 
         ttk.Label(mask_card, text="Overlay W:", style="Subtle.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Entry(mask_card, textvariable=self.mask_overlay_width_var, style="Search.TEntry", width=9).grid(row=0, column=1, sticky="w", padx=(6, 0))
@@ -540,11 +541,14 @@ class CapCutGui:
         ttk.Label(mask_card, text="Bo góc mask (0..100):", style="Subtle.TLabel").grid(row=2, column=0, sticky="w", pady=(4, 0))
         ttk.Entry(mask_card, textvariable=self.mask_round_corner_var, style="Search.TEntry", width=9).grid(row=2, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
 
-        ttk.Label(mask_card, text="Background path (tuỳ chọn):", style="Subtle.TLabel").grid(row=3, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(mask_card, textvariable=self.mask_backgrounds_var, style="Search.TEntry").grid(row=3, column=1, columnspan=2, sticky=EW, padx=(6, 0), pady=(6, 0))
+        ttk.Label(mask_card, text="Tỉ lệ mask/background (%):", style="Subtle.TLabel").grid(row=3, column=0, sticky="w", pady=(4, 0))
+        ttk.Entry(mask_card, textvariable=self.mask_scale_percent_var, style="Search.TEntry", width=9).grid(row=3, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
+
+        ttk.Label(mask_card, text="Background path (tuỳ chọn):", style="Subtle.TLabel").grid(row=4, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(mask_card, textvariable=self.mask_backgrounds_var, style="Search.TEntry").grid(row=4, column=1, columnspan=2, sticky=EW, padx=(6, 0), pady=(6, 0))
 
         action_row = ttk.Frame(mask_card, style="Panel.TFrame")
-        action_row.grid(row=4, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        action_row.grid(row=5, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         self.apply_mask_button = ttk.Button(
             action_row,
@@ -555,10 +559,10 @@ class CapCutGui:
         )
         self.apply_mask_button.grid(row=0, column=0, sticky="w")
 
-        ttk.Label(mask_card, text="Background có sẵn (embedded trong EXE):", style="Subtle.TLabel").grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 4))
+        ttk.Label(mask_card, text="Background có sẵn (embedded trong EXE):", style="Subtle.TLabel").grid(row=6, column=0, columnspan=3, sticky="w", pady=(8, 4))
 
         mask_lib_host = ttk.Frame(mask_card, style="Panel.TFrame")
-        mask_lib_host.grid(row=6, column=0, columnspan=3, sticky=NSEW)
+        mask_lib_host.grid(row=7, column=0, columnspan=3, sticky=NSEW)
         mask_lib_host.columnconfigure(0, weight=1)
         mask_lib_host.rowconfigure(0, weight=1)
         mask_lib_host.configure(height=130)
@@ -1638,13 +1642,14 @@ class CapCutGui:
                 out.append(p)
         return out
 
-    def _validate_mask_inputs(self) -> tuple[float, float, float, list[str]] | None:
+    def _validate_mask_inputs(self) -> tuple[float, float, float, float, list[str]] | None:
         try:
             w = float(self.mask_overlay_width_var.get().strip())
             h = float(self.mask_overlay_height_var.get().strip())
             rc = float(self.mask_round_corner_var.get().strip())
+            scale_pct = float(self.mask_scale_percent_var.get().strip())
         except ValueError:
-            messagebox.showerror("Thiếu input", "Overlay W/H/Bo góc phải là số hợp lệ.")
+            messagebox.showerror("Thiếu input", "Overlay W/H/Bo góc/Tỉ lệ phải là số hợp lệ.")
             return None
 
         if w <= 0 or h <= 0:
@@ -1655,6 +1660,9 @@ class CapCutGui:
             return None
         if rc < 0 or rc > 100:
             messagebox.showerror("Input không hợp lệ", "Bo góc mask phải nằm trong 0..100.")
+            return None
+        if scale_pct < 1 or scale_pct > 300:
+            messagebox.showerror("Input không hợp lệ", "Tỉ lệ mask/background phải nằm trong 1..300 (%).")
             return None
 
         manual_paths = self._parse_background_paths(self.mask_backgrounds_var.get())
@@ -1678,7 +1686,7 @@ class CapCutGui:
                 messagebox.showerror("Background không tồn tại", f"Không tìm thấy file: {p}")
                 return None
 
-        return w, h, rc, bg_paths
+        return w, h, rc, scale_pct, bg_paths
 
     def _on_apply_mask_only(self) -> None:
         if self.current_process is not None or self.current_task_running:
@@ -1695,12 +1703,12 @@ class CapCutGui:
         validated = self._validate_mask_inputs()
         if validated is None:
             return
-        overlay_w, overlay_h, round_corner, bg_paths = validated
+        overlay_w, overlay_h, round_corner, scale_pct, bg_paths = validated
 
         self.current_action = "mask_apply"
         self._append_log("\n--- Apply mask ---\n")
         self._append_log(
-            f"projects={len(selected_projects)} overlay={overlay_w}x{overlay_h} round_corner={round_corner} backgrounds={len(bg_paths)} catalog={MASK_BACKGROUND_CATALOG_PATH}\n"
+            f"projects={len(selected_projects)} overlay={overlay_w}x{overlay_h} round_corner={round_corner} scale_pct={scale_pct} backgrounds={len(bg_paths)} catalog={MASK_BACKGROUND_CATALOG_PATH}\n"
         )
         self._set_status(f"Đang áp dụng mask cho {len(selected_projects)} dự án...", "info")
         self._set_running_state(True)
@@ -1708,7 +1716,7 @@ class CapCutGui:
 
         threading.Thread(
             target=self._execute_apply_mask_only,
-            args=(selected_projects, overlay_w, overlay_h, round_corner, bg_paths),
+            args=(selected_projects, overlay_w, overlay_h, round_corner, scale_pct, bg_paths),
             daemon=True,
         ).start()
 
@@ -1718,6 +1726,7 @@ class CapCutGui:
         overlay_w: float,
         overlay_h: float,
         round_corner: float,
+        scale_pct: float,
         bg_paths: list[str],
     ) -> None:
         output_buf = io.StringIO()
@@ -1748,6 +1757,7 @@ class CapCutGui:
                         overlay_width=overlay_w,
                         overlay_height=overlay_h,
                         round_corner=round_corner,
+                        mask_scale_percent=scale_pct,
                         background_paths=bg_paths,
                         template_draft=template_for_apply,
                         background_catalog_path=MASK_BACKGROUND_CATALOG_PATH,
@@ -1762,6 +1772,7 @@ class CapCutGui:
                             overlay_width=overlay_w,
                             overlay_height=overlay_h,
                             round_corner=round_corner,
+                            mask_scale_percent=scale_pct,
                             background_paths=bg_paths,
                             template_draft=template_for_apply,
                             background_catalog_path=MASK_BACKGROUND_CATALOG_PATH,
