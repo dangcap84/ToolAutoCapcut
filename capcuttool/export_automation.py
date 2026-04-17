@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.wintypes
+import os
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -98,7 +99,7 @@ class CapCutSessionController:
             deadline = time.time() + max(1.0, timeout_seconds)
             hwnd = None
             while time.time() < deadline:
-                hwnd = self.find_main_window()
+                hwnd = self.find_main_window(preferred_pid=proc.pid)
                 if hwnd:
                     return CapCutLaunchResult(process_id=proc.pid, hwnd=hwnd, exe_path=str(p))
                 time.sleep(0.5)
@@ -106,13 +107,18 @@ class CapCutSessionController:
 
         return CapCutLaunchResult(process_id=None, hwnd=None, exe_path=None)
 
-    def find_main_window(self) -> int | None:
-        """Tìm hwnd của CapCut theo title hint."""
+    def find_main_window(self, preferred_pid: int | None = None) -> int | None:
+        """Tìm hwnd của CapCut theo title hint, ưu tiên đúng PID vừa launch.
+
+        Đồng thời loại trừ PID hiện tại để tránh match nhầm cửa sổ tool (CapCut Sync ...).
+        """
         if not self._is_windows():
             return None
 
         user32 = ctypes.windll.user32
-        windows: list[int] = []
+        preferred_windows: list[int] = []
+        fallback_windows: list[int] = []
+        current_pid = int(os.getpid())
 
         enum_proc_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
 
@@ -127,12 +133,26 @@ class CapCutSessionController:
             buff = ctypes.create_unicode_buffer(length + 1)
             user32.GetWindowTextW(hwnd, buff, length + 1)
             title = (buff.value or "").strip().lower()
-            if self.title_hint in title:
-                windows.append(hwnd)
+            if self.title_hint not in title:
+                return True
+
+            pid_ref = ctypes.wintypes.DWORD(0)
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid_ref))
+            pid = int(pid_ref.value or 0)
+
+            if pid == current_pid:
+                return True
+
+            if preferred_pid and pid == int(preferred_pid):
+                preferred_windows.append(hwnd)
+            else:
+                fallback_windows.append(hwnd)
             return True
 
         user32.EnumWindows(enum_proc_type(_callback), 0)
-        return windows[0] if windows else None
+        if preferred_windows:
+            return preferred_windows[0]
+        return fallback_windows[0] if fallback_windows else None
 
     @staticmethod
     def apply_window_policy(hwnd: int, policy: WindowPolicy) -> bool:
