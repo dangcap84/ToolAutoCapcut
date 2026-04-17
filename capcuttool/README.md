@@ -67,9 +67,15 @@ Current scope (step-by-step foundation):
 Implemented classes:
 - `CapCutSessionController`
 - `ProjectNavigator` + `ProjectNavigationConfig`
+- `ExportActionRunner` + `ExportActionConfig`
 - `PyAutoGUIBackend` (optional runtime dependency)
 
-Next tasks: Export button detection/click, progress-to-100% tracking, and full loop per project.
+Export trigger strategy (Task 3):
+- Try template match click first (`export_button_template`, `confirm_button_template`) if template images are provided.
+- Fallback to ratio-based click in the CapCut window when templates are unavailable.
+- Confirm popup is best-effort (if not found, continue because some CapCut variants auto-start export).
+
+Next tasks: progress-to-100% tracking and full loop per project.
 
 ### Run on VPS/Linux (test)
 ```bash

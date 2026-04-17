@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import ctypes.wintypes
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -162,7 +163,7 @@ class CapCutSessionController:
 
 
 class UIBackend(Protocol):
-    """UI backend tối thiểu cho bước điều hướng project."""
+    """UI backend tối thiểu cho bước điều hướng/export project."""
 
     def hotkey(self, *keys: str) -> None: ...
 
@@ -171,6 +172,8 @@ class UIBackend(Protocol):
     def write(self, text: str) -> None: ...
 
     def click_abs(self, x: int, y: int, clicks: int = 1) -> None: ...
+
+    def locate_center_on_screen(self, image_path: str, confidence: float = 0.82) -> tuple[int, int] | None: ...
 
 
 class PyAutoGUIBackend:
@@ -202,6 +205,16 @@ class PyAutoGUIBackend:
 
     def click_abs(self, x: int, y: int, clicks: int = 1) -> None:
         self._pg.click(int(x), int(y), clicks=max(1, int(clicks)))
+
+    def locate_center_on_screen(self, image_path: str, confidence: float = 0.82) -> tuple[int, int] | None:
+        try:
+            box = self._pg.locateOnScreen(str(image_path), confidence=float(confidence), grayscale=True)
+        except Exception:
+            return None
+        if not box:
+            return None
+        center = self._pg.center(box)
+        return int(center.x), int(center.y)
 
 
 @dataclass
@@ -314,6 +327,155 @@ class ProjectNavigator:
             project_name=name,
             attempts=max(1, self.cfg.retries),
             message="project navigation failed after retries",
+            steps=steps,
+        )
+
+
+@dataclass
+class ExportActionConfig:
+    """Task 3: tìm/bấm nút Export + xác nhận popup theo toạ độ fallback.
+
+    export_btn_x_ratio/y_ratio: vị trí nút Export chính trong màn editor.
+    confirm_btn_x_ratio/y_ratio: vị trí nút xác nhận Export trong popup.
+    """
+
+    export_btn_x_ratio: float = 0.93
+    export_btn_y_ratio: float = 0.06
+    confirm_btn_x_ratio: float = 0.83
+    confirm_btn_y_ratio: float = 0.90
+    search_retries: int = 3
+    click_retries: int = 2
+    post_export_wait_seconds: float = 1.0
+    post_confirm_wait_seconds: float = 1.2
+    template_confidence: float = 0.82
+    export_button_template: str | None = None
+    confirm_button_template: str | None = None
+
+
+@dataclass
+class ExportActionResult:
+    success: bool
+    attempts: int
+    message: str
+    steps: list[str] = field(default_factory=list)
+
+
+class ExportActionRunner:
+    """Task 3 runner cho bước bấm Export."""
+
+    def __init__(self, backend: UIBackend, cfg: ExportActionConfig | None = None) -> None:
+        self.backend = backend
+        self.cfg = cfg or ExportActionConfig()
+
+    @staticmethod
+    def _get_window_rect(hwnd: int) -> WindowRect | None:
+        if not hasattr(ctypes, "windll") or not hwnd:
+            return None
+
+        user32 = ctypes.windll.user32
+        rect = ctypes.wintypes.RECT()
+        ok = user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        if not ok:
+            return None
+        return WindowRect(rect.left, rect.top, rect.right, rect.bottom)
+
+    def _click_ratio(self, hwnd: int, x_ratio: float, y_ratio: float, *, clicks: int = 1) -> bool:
+        rect = self._get_window_rect(hwnd)
+        if rect is None or rect.width <= 0 or rect.height <= 0:
+            return False
+
+        x = int(rect.left + rect.width * min(0.99, max(0.01, x_ratio)))
+        y = int(rect.top + rect.height * min(0.99, max(0.01, y_ratio)))
+        self.backend.click_abs(x, y, clicks=clicks)
+        return True
+
+    def _try_click_template(self, template_path: str | None) -> bool:
+        if not template_path:
+            return False
+        p = Path(template_path)
+        if not p.exists():
+            return False
+        pos = self.backend.locate_center_on_screen(str(p), confidence=self.cfg.template_confidence)
+        if not pos:
+            return False
+        self.backend.click_abs(pos[0], pos[1], clicks=1)
+        return True
+
+    def trigger_export(self, hwnd: int) -> ExportActionResult:
+        steps: list[str] = []
+
+        for attempt in range(1, max(1, self.cfg.search_retries) + 1):
+            try:
+                steps.append(f"attempt#{attempt}:focus_editor")
+                self.backend.press("esc")
+                time.sleep(0.15)
+
+                steps.append(f"attempt#{attempt}:click_export")
+                export_clicked = False
+                for click_attempt in range(1, max(1, self.cfg.click_retries) + 1):
+                    if self._try_click_template(self.cfg.export_button_template):
+                        export_clicked = True
+                        steps.append(f"attempt#{attempt}:export_clicked_template#{click_attempt}")
+                        break
+
+                    if self._click_ratio(
+                        hwnd,
+                        self.cfg.export_btn_x_ratio,
+                        self.cfg.export_btn_y_ratio,
+                        clicks=1,
+                    ):
+                        export_clicked = True
+                        steps.append(f"attempt#{attempt}:export_clicked_ratio#{click_attempt}")
+                        break
+                    time.sleep(0.2)
+
+                if not export_clicked:
+                    steps.append(f"attempt#{attempt}:export_click_failed")
+                    continue
+
+                time.sleep(max(0.2, self.cfg.post_export_wait_seconds))
+
+                # xác nhận popup (nếu có)
+                steps.append(f"attempt#{attempt}:confirm_export")
+                confirmed = False
+                for click_attempt in range(1, max(1, self.cfg.click_retries) + 1):
+                    if self._try_click_template(self.cfg.confirm_button_template):
+                        confirmed = True
+                        steps.append(f"attempt#{attempt}:confirm_clicked_template#{click_attempt}")
+                        break
+
+                    if self._click_ratio(
+                        hwnd,
+                        self.cfg.confirm_btn_x_ratio,
+                        self.cfg.confirm_btn_y_ratio,
+                        clicks=1,
+                    ):
+                        confirmed = True
+                        steps.append(f"attempt#{attempt}:confirm_clicked_ratio#{click_attempt}")
+                        break
+
+                    time.sleep(0.2)
+
+                # Popup có thể không xuất hiện (CapCut auto start export), nên không ép fail.
+                if not confirmed:
+                    steps.append(f"attempt#{attempt}:confirm_not_found_continue")
+
+                time.sleep(max(0.3, self.cfg.post_confirm_wait_seconds))
+                return ExportActionResult(
+                    success=True,
+                    attempts=attempt,
+                    message="export action triggered",
+                    steps=steps,
+                )
+
+            except Exception as exc:  # pragma: no cover - runtime UI branch
+                steps.append(f"attempt#{attempt}:error={exc}")
+                time.sleep(0.3)
+
+        return ExportActionResult(
+            success=False,
+            attempts=max(1, self.cfg.search_retries),
+            message="failed to trigger export",
             steps=steps,
         )
 
