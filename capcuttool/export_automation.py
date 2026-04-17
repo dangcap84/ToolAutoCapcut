@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Protocol
 
+import difflib
+
 _CREATE_NO_WINDOW = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
@@ -201,9 +203,13 @@ class UIBackend(Protocol):
 
     def click_abs(self, x: int, y: int, clicks: int = 1) -> None: ...
 
+    def scroll(self, clicks: int) -> None: ...
+
     def locate_center_on_screen(self, image_path: str, confidence: float = 0.82) -> tuple[int, int] | None: ...
 
     def screenshot(self, path: str) -> None: ...
+
+    def get_screen_size(self) -> tuple[int, int]: ...
 
 
 class PyAutoGUIBackend:
@@ -236,6 +242,9 @@ class PyAutoGUIBackend:
     def click_abs(self, x: int, y: int, clicks: int = 1) -> None:
         self._pg.click(int(x), int(y), clicks=max(1, int(clicks)))
 
+    def scroll(self, clicks: int) -> None:
+        self._pg.scroll(int(clicks))
+
     def locate_center_on_screen(self, image_path: str, confidence: float = 0.82) -> tuple[int, int] | None:
         try:
             box = self._pg.locateOnScreen(str(image_path), confidence=float(confidence), grayscale=True)
@@ -249,25 +258,37 @@ class PyAutoGUIBackend:
     def screenshot(self, path: str) -> None:
         self._pg.screenshot(str(path))
 
+    def get_screen_size(self) -> tuple[int, int]:
+        size = self._pg.size()
+        return int(size.width), int(size.height)
+
 
 @dataclass
 class ProjectNavigationConfig:
     """Config điều hướng project trong home/list view của CapCut.
 
-    result_click_x_ratio/y_ratio là toạ độ tương đối trong cửa sổ CapCut
-    để click item đầu tiên trong list sau khi search.
+    Không dùng Ctrl+F/search nữa. Thay vào đó quét list/grid project trực tiếp.
     """
 
     result_click_x_ratio: float = 0.23
     result_click_y_ratio: float = 0.30
     esc_reset_count: int = 2
     after_open_wait_seconds: float = 2.5
-    after_search_wait_seconds: float = 1.3
+    after_search_wait_seconds: float = 0.0
     retries: int = 3
     result_open_clicks: int = 3
     result_fallback_y_step_ratio: float = 0.055
     require_project_title_match: bool = True
     allow_title_change_fallback: bool = True
+    row_count: int = 4
+    col_count: int = 3
+    first_card_x_ratio: float = 0.20
+    first_card_y_ratio: float = 0.24
+    card_x_gap_ratio: float = 0.26
+    card_y_gap_ratio: float = 0.21
+    max_scroll_pages: int = 8
+    scroll_step: int = -650
+    name_match_threshold: float = 0.62
 
 
 @dataclass
@@ -285,6 +306,95 @@ class ProjectNavigator:
     def __init__(self, backend: UIBackend, cfg: ProjectNavigationConfig | None = None) -> None:
         self.backend = backend
         self.cfg = cfg or ProjectNavigationConfig()
+
+    @staticmethod
+    def _norm_text(s: str) -> str:
+        return "".join(ch.lower() for ch in (s or "").strip() if ch.isalnum())
+
+    def _name_score(self, a: str, b: str) -> float:
+        na = self._norm_text(a)
+        nb = self._norm_text(b)
+        if not na or not nb:
+            return 0.0
+        if na == nb:
+            return 1.0
+        if na in nb or nb in na:
+            return 0.9
+        return float(difflib.SequenceMatcher(None, na, nb).ratio())
+
+    def _iter_project_card_points(self, rect: WindowRect) -> list[tuple[int, int]]:
+        pts: list[tuple[int, int]] = []
+        for r in range(max(1, self.cfg.row_count)):
+            for c in range(max(1, self.cfg.col_count)):
+                x = int(rect.left + rect.width * (self.cfg.first_card_x_ratio + c * self.cfg.card_x_gap_ratio))
+                y = int(rect.top + rect.height * (self.cfg.first_card_y_ratio + r * self.cfg.card_y_gap_ratio))
+                pts.append((x, y))
+        return pts
+
+    def _read_clipboard_text(self) -> str:
+        if not hasattr(ctypes, "windll"):
+            return ""
+        try:
+            import tkinter as tk
+            root = tk.Tk()
+            root.withdraw()
+            try:
+                return (root.clipboard_get() or "").strip()
+            finally:
+                root.destroy()
+        except Exception:
+            return ""
+
+    def _copy_current_selection_text(self) -> str:
+        # thử copy text tên card đang focus (nếu CapCut hỗ trợ)
+        self.backend.hotkey("ctrl", "c")
+        time.sleep(0.08)
+        return self._read_clipboard_text()
+
+    def _find_project_by_scan(self, hwnd: int, project_name: str, steps: list[str]) -> bool:
+        rect = self._get_window_rect(hwnd)
+        if rect is None or rect.width <= 0 or rect.height <= 0:
+            steps.append("scan:no_window_rect")
+            return False
+
+        target = project_name
+        points = self._iter_project_card_points(rect)
+        best_score = 0.0
+        best_pt: tuple[int, int] | None = None
+
+        for page in range(max(1, self.cfg.max_scroll_pages)):
+            steps.append(f"scan:page#{page+1}")
+            for i, (x, y) in enumerate(points, start=1):
+                self.backend.click_abs(x, y, clicks=1)
+                time.sleep(0.08)
+                name = self._copy_current_selection_text()
+                if name:
+                    score = self._name_score(target, name)
+                    steps.append(f"scan:card#{i}:name={name}:score={score:.2f}")
+                    if score > best_score:
+                        best_score = score
+                        best_pt = (x, y)
+                    if score >= self.cfg.name_match_threshold:
+                        self.backend.click_abs(x, y, clicks=max(2, self.cfg.result_open_clicks))
+                        time.sleep(0.2)
+                        self.backend.press("enter")
+                        steps.append(f"scan:matched_opened:score={score:.2f}")
+                        return True
+
+            if page < max(1, self.cfg.max_scroll_pages) - 1:
+                # scroll xuống để quét trang kế tiếp
+                self.backend.scroll(self.cfg.scroll_step)
+                time.sleep(0.2)
+
+        if best_pt and best_score >= max(0.45, self.cfg.name_match_threshold - 0.15):
+            self.backend.click_abs(best_pt[0], best_pt[1], clicks=max(2, self.cfg.result_open_clicks))
+            time.sleep(0.2)
+            self.backend.press("enter")
+            steps.append(f"scan:best_effort_open:score={best_score:.2f}")
+            return True
+
+        steps.append(f"scan:not_found:best_score={best_score:.2f}")
+        return False
 
     @staticmethod
     def _focus_window(hwnd: int) -> bool:
@@ -380,24 +490,11 @@ class ProjectNavigator:
                 if before_title:
                     steps.append(f"attempt#{attempt}:title_before={before_title}")
 
-                steps.append(f"attempt#{attempt}:open_search")
-                self.backend.hotkey("ctrl", "f")
-                time.sleep(0.15)
-                self.backend.hotkey("ctrl", "a")
-                self.backend.press("backspace")
-                self.backend.write(name)
-                self.backend.press("enter")
-                time.sleep(max(0.3, self.cfg.after_search_wait_seconds))
-
-                steps.append(f"attempt#{attempt}:open_first_result")
-                if not self._click_project_result_slot(hwnd):
-                    return ProjectNavigationResult(
-                        success=False,
-                        project_name=name,
-                        attempts=attempt,
-                        message="cannot resolve CapCut window rect for result click",
-                        steps=steps,
-                    )
+                steps.append(f"attempt#{attempt}:scan_project_cards")
+                opened = self._find_project_by_scan(hwnd, name, steps)
+                if not opened:
+                    steps.append(f"attempt#{attempt}:scan_not_opened")
+                    continue
 
                 time.sleep(max(0.3, self.cfg.after_open_wait_seconds))
                 after_title = self._get_window_title(hwnd)
