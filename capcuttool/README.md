@@ -68,6 +68,8 @@ Implemented classes:
 - `CapCutSessionController`
 - `ProjectNavigator` + `ProjectNavigationConfig`
 - `ExportActionRunner` + `ExportActionConfig`
+- `ExportProgressWatcher` + `ExportProgressConfig`
+- `BatchExportRunner` + `BatchExportConfig`
 - `PyAutoGUIBackend` (optional runtime dependency)
 
 Export trigger strategy (Task 3):
@@ -75,7 +77,10 @@ Export trigger strategy (Task 3):
 - Fallback to ratio-based click in the CapCut window when templates are unavailable.
 - Confirm popup is best-effort (if not found, continue because some CapCut variants auto-start export).
 
-Next tasks: progress-to-100% tracking and full loop per project.
+Progress/loop strategy (Task 4):
+- Poll export completion by template detection (`done_template` or `progress_100_template`) with timeout.
+- Orchestrate per project: relaunch CapCut -> open project -> trigger export -> wait done -> close/relaunch next.
+- Save failure screenshots optionally via `screenshot_on_fail_dir`.
 
 ### Run on VPS/Linux (test)
 ```bash

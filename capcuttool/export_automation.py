@@ -6,7 +6,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Protocol
+from typing import Callable, Iterable, Protocol
 
 
 @dataclass
@@ -175,6 +175,8 @@ class UIBackend(Protocol):
 
     def locate_center_on_screen(self, image_path: str, confidence: float = 0.82) -> tuple[int, int] | None: ...
 
+    def screenshot(self, path: str) -> None: ...
+
 
 class PyAutoGUIBackend:
     """Backend mặc định bằng pyautogui (optional dependency).
@@ -215,6 +217,9 @@ class PyAutoGUIBackend:
             return None
         center = self._pg.center(box)
         return int(center.x), int(center.y)
+
+    def screenshot(self, path: str) -> None:
+        self._pg.screenshot(str(path))
 
 
 @dataclass
@@ -478,6 +483,270 @@ class ExportActionRunner:
             message="failed to trigger export",
             steps=steps,
         )
+
+
+@dataclass
+class ExportProgressConfig:
+    """Task 4: theo dõi tiến trình export tới 100%/done."""
+
+    timeout_seconds: float = 60.0 * 30.0
+    poll_interval_seconds: float = 2.0
+    done_template: str | None = None
+    progress_100_template: str | None = None
+    export_panel_template: str | None = None
+    template_confidence: float = 0.82
+
+
+@dataclass
+class ExportProgressResult:
+    success: bool
+    reached_done: bool
+    elapsed_seconds: float
+    message: str
+    steps: list[str] = field(default_factory=list)
+
+
+class ExportProgressWatcher:
+    """Watcher cho bước chờ export hoàn tất.
+
+    Hiện tại dùng template detection là chính; nếu chưa có template,
+    watcher vẫn chờ timeout theo polling để orchestration không vỡ.
+    """
+
+    def __init__(self, backend: UIBackend, cfg: ExportProgressConfig | None = None) -> None:
+        self.backend = backend
+        self.cfg = cfg or ExportProgressConfig()
+
+    def _seen_template(self, template_path: str | None) -> bool:
+        if not template_path:
+            return False
+        p = Path(template_path)
+        if not p.exists():
+            return False
+        pos = self.backend.locate_center_on_screen(str(p), confidence=self.cfg.template_confidence)
+        return bool(pos)
+
+    def wait_until_done(self) -> ExportProgressResult:
+        steps: list[str] = []
+        start = time.time()
+        deadline = start + max(5.0, self.cfg.timeout_seconds)
+
+        while time.time() < deadline:
+            elapsed = time.time() - start
+            steps.append(f"poll@{elapsed:.1f}s")
+
+            if self._seen_template(self.cfg.done_template):
+                steps.append("done_template_detected")
+                return ExportProgressResult(
+                    success=True,
+                    reached_done=True,
+                    elapsed_seconds=elapsed,
+                    message="export completed (done template)",
+                    steps=steps,
+                )
+
+            if self._seen_template(self.cfg.progress_100_template):
+                steps.append("progress_100_template_detected")
+                return ExportProgressResult(
+                    success=True,
+                    reached_done=True,
+                    elapsed_seconds=elapsed,
+                    message="export reached 100%",
+                    steps=steps,
+                )
+
+            # Nếu panel export biến mất sau khi đã từng xuất hiện, cũng coi là completed best-effort.
+            if self.cfg.export_panel_template:
+                panel_visible = self._seen_template(self.cfg.export_panel_template)
+                steps.append(f"panel_visible={int(panel_visible)}")
+
+            time.sleep(max(0.2, self.cfg.poll_interval_seconds))
+
+        elapsed = time.time() - start
+        return ExportProgressResult(
+            success=False,
+            reached_done=False,
+            elapsed_seconds=elapsed,
+            message="export progress timeout",
+            steps=steps,
+        )
+
+
+@dataclass
+class BatchProjectResult:
+    project_name: str
+    success: bool
+    stage: str
+    message: str
+    elapsed_seconds: float
+    steps: list[str] = field(default_factory=list)
+
+
+@dataclass
+class BatchExportConfig:
+    project_names: list[str]
+    window_policy: WindowPolicy = field(default_factory=WindowPolicy)
+    relaunch_each_project: bool = True
+    launch_timeout_seconds: float = 25.0
+    close_wait_seconds: float = 3.0
+    screenshot_on_fail_dir: str | None = None
+
+
+class BatchExportRunner:
+    """Task 4 orchestration: open project -> export -> wait done -> close -> next."""
+
+    def __init__(
+        self,
+        *,
+        session: CapCutSessionController,
+        navigator: ProjectNavigator,
+        exporter: ExportActionRunner,
+        watcher: ExportProgressWatcher,
+        backend: UIBackend,
+        exe_candidates: Iterable[str] | None = None,
+        logger: Callable[[str], None] | None = None,
+    ) -> None:
+        self.session = session
+        self.navigator = navigator
+        self.exporter = exporter
+        self.watcher = watcher
+        self.backend = backend
+        self.exe_candidates = list(exe_candidates or default_capcut_exe_candidates())
+        self.logger = logger or (lambda _msg: None)
+
+    def _log(self, msg: str) -> None:
+        self.logger(msg)
+
+    def _capture_fail_shot(self, out_dir: str | None, project_name: str, stage: str) -> str | None:
+        if not out_dir:
+            return None
+        try:
+            p = Path(out_dir)
+            p.mkdir(parents=True, exist_ok=True)
+            ts = int(time.time())
+            safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in project_name)
+            shot = p / f"{safe}_{stage}_{ts}.png"
+            self.backend.screenshot(str(shot))
+            return str(shot)
+        except Exception:
+            return None
+
+    def _launch_and_prepare(self, cfg: BatchExportConfig) -> CapCutLaunchResult:
+        self.session.close_existing(timeout_seconds=cfg.close_wait_seconds)
+        launch = self.session.launch(self.exe_candidates, timeout_seconds=cfg.launch_timeout_seconds)
+        if launch.hwnd:
+            self.session.apply_window_policy(launch.hwnd, cfg.window_policy)
+            time.sleep(0.8)
+        return launch
+
+    def run(self, cfg: BatchExportConfig) -> list[BatchProjectResult]:
+        results: list[BatchProjectResult] = []
+
+        for idx, project_name in enumerate(cfg.project_names, start=1):
+            t0 = time.time()
+            name = (project_name or "").strip()
+            if not name:
+                results.append(
+                    BatchProjectResult(
+                        project_name=project_name,
+                        success=False,
+                        stage="validate",
+                        message="empty project name",
+                        elapsed_seconds=0.0,
+                    )
+                )
+                continue
+
+            self._log(f"[{idx}/{len(cfg.project_names)}] start project={name}")
+
+            launch = self._launch_and_prepare(cfg)
+            if not launch.hwnd:
+                elapsed = time.time() - t0
+                shot = self._capture_fail_shot(cfg.screenshot_on_fail_dir, name, "launch")
+                msg = "cannot launch CapCut window"
+                if shot:
+                    msg += f"; screenshot={shot}"
+                results.append(
+                    BatchProjectResult(
+                        project_name=name,
+                        success=False,
+                        stage="launch",
+                        message=msg,
+                        elapsed_seconds=elapsed,
+                    )
+                )
+                continue
+
+            nav = self.navigator.open_project(launch.hwnd, name)
+            if not nav.success:
+                elapsed = time.time() - t0
+                shot = self._capture_fail_shot(cfg.screenshot_on_fail_dir, name, "navigate")
+                msg = nav.message + (f"; screenshot={shot}" if shot else "")
+                results.append(
+                    BatchProjectResult(
+                        project_name=name,
+                        success=False,
+                        stage="navigate",
+                        message=msg,
+                        elapsed_seconds=elapsed,
+                        steps=nav.steps,
+                    )
+                )
+                self.session.close_existing(timeout_seconds=cfg.close_wait_seconds)
+                continue
+
+            act = self.exporter.trigger_export(launch.hwnd)
+            if not act.success:
+                elapsed = time.time() - t0
+                shot = self._capture_fail_shot(cfg.screenshot_on_fail_dir, name, "export_click")
+                msg = act.message + (f"; screenshot={shot}" if shot else "")
+                results.append(
+                    BatchProjectResult(
+                        project_name=name,
+                        success=False,
+                        stage="export_click",
+                        message=msg,
+                        elapsed_seconds=elapsed,
+                        steps=nav.steps + act.steps,
+                    )
+                )
+                self.session.close_existing(timeout_seconds=cfg.close_wait_seconds)
+                continue
+
+            prog = self.watcher.wait_until_done()
+            elapsed = time.time() - t0
+            if not prog.success:
+                shot = self._capture_fail_shot(cfg.screenshot_on_fail_dir, name, "progress_timeout")
+                msg = prog.message + (f"; screenshot={shot}" if shot else "")
+                results.append(
+                    BatchProjectResult(
+                        project_name=name,
+                        success=False,
+                        stage="progress",
+                        message=msg,
+                        elapsed_seconds=elapsed,
+                        steps=nav.steps + act.steps + prog.steps,
+                    )
+                )
+                self.session.close_existing(timeout_seconds=cfg.close_wait_seconds)
+                continue
+
+            results.append(
+                BatchProjectResult(
+                    project_name=name,
+                    success=True,
+                    stage="done",
+                    message=prog.message,
+                    elapsed_seconds=elapsed,
+                    steps=nav.steps + act.steps + prog.steps,
+                )
+            )
+            self._log(f"[{idx}/{len(cfg.project_names)}] done project={name} in {elapsed:.1f}s")
+
+            if cfg.relaunch_each_project:
+                self.session.close_existing(timeout_seconds=cfg.close_wait_seconds)
+
+        return results
 
 
 def default_capcut_exe_candidates() -> list[str]:
