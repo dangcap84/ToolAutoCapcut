@@ -72,7 +72,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.56")
+        self.root.title("CapCut Sync v3.9.57")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -1796,6 +1796,7 @@ class CapCutGui:
                         overlay_height=overlay_h,
                         round_corner=round_corner,
                         mask_scale_percent=scale_pct,
+                        mask_mode=str(self.mask_mode_var.get() or "params"),
                         background_paths=bg_paths,
                         template_draft=template_for_apply,
                         background_catalog_path=MASK_BACKGROUND_CATALOG_PATH,
@@ -1811,6 +1812,7 @@ class CapCutGui:
                             overlay_height=overlay_h,
                             round_corner=round_corner,
                             mask_scale_percent=scale_pct,
+                            mask_mode=str(self.mask_mode_var.get() or "params"),
                             background_paths=bg_paths,
                             template_draft=template_for_apply,
                             background_catalog_path=MASK_BACKGROUND_CATALOG_PATH,

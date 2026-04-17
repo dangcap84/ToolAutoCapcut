@@ -422,6 +422,7 @@ def apply_mask_to_draft(
     overlay_height: float,
     round_corner: float = 20.0,
     mask_scale_percent: float = 100.0,
+    mask_mode: str = "params",
     background_paths: list[str],
     template_draft: dict[str, Any] | None,
     background_catalog_path: Path | None,
@@ -482,6 +483,12 @@ def apply_mask_to_draft(
     total_duration_us = max(1, int(total_duration_us))
 
     canvas_w, canvas_h = _get_canvas_size(draft)
+
+    mode = str(mask_mode or "params").strip().lower()
+    if mode == "ratio":
+        ratio = max(1.0, min(300.0, float(mask_scale_percent))) / 100.0
+        overlay_width = float(canvas_w) * ratio
+        overlay_height = float(canvas_h) * ratio
 
     comb_video = _build_combination_material(
         total_duration_us=total_duration_us,
