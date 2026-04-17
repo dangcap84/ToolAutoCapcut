@@ -3,9 +3,9 @@ from __future__ import annotations
 import ctypes
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Protocol
 
 
 @dataclass
@@ -22,6 +22,22 @@ class CapCutLaunchResult:
     process_id: int | None
     hwnd: int | None
     exe_path: str | None
+
+
+@dataclass
+class WindowRect:
+    left: int
+    top: int
+    right: int
+    bottom: int
+
+    @property
+    def width(self) -> int:
+        return max(0, self.right - self.left)
+
+    @property
+    def height(self) -> int:
+        return max(0, self.bottom - self.top)
 
 
 class CapCutSessionController:
@@ -143,6 +159,163 @@ class CapCutSessionController:
         )
         user32.SetForegroundWindow(hwnd)
         return bool(ok)
+
+
+class UIBackend(Protocol):
+    """UI backend tối thiểu cho bước điều hướng project."""
+
+    def hotkey(self, *keys: str) -> None: ...
+
+    def press(self, key: str) -> None: ...
+
+    def write(self, text: str) -> None: ...
+
+    def click_abs(self, x: int, y: int, clicks: int = 1) -> None: ...
+
+
+class PyAutoGUIBackend:
+    """Backend mặc định bằng pyautogui (optional dependency).
+
+    Nếu môi trường chưa có pyautogui, constructor sẽ raise RuntimeError
+    với hướng dẫn cài đặt rõ ràng.
+    """
+
+    def __init__(self, pause_seconds: float = 0.05) -> None:
+        try:
+            import pyautogui  # type: ignore
+        except Exception as exc:  # pragma: no cover - runtime dep
+            raise RuntimeError(
+                "pyautogui is required for UI navigation. Install with: pip install pyautogui"
+            ) from exc
+
+        self._pg = pyautogui
+        self._pg.PAUSE = max(0.0, float(pause_seconds))
+
+    def hotkey(self, *keys: str) -> None:
+        self._pg.hotkey(*keys)
+
+    def press(self, key: str) -> None:
+        self._pg.press(key)
+
+    def write(self, text: str) -> None:
+        self._pg.write(text)
+
+    def click_abs(self, x: int, y: int, clicks: int = 1) -> None:
+        self._pg.click(int(x), int(y), clicks=max(1, int(clicks)))
+
+
+@dataclass
+class ProjectNavigationConfig:
+    """Config điều hướng project trong home/list view của CapCut.
+
+    result_click_x_ratio/y_ratio là toạ độ tương đối trong cửa sổ CapCut
+    để click item đầu tiên trong list sau khi search.
+    """
+
+    result_click_x_ratio: float = 0.23
+    result_click_y_ratio: float = 0.30
+    esc_reset_count: int = 2
+    after_open_wait_seconds: float = 2.0
+    after_search_wait_seconds: float = 1.1
+    retries: int = 2
+
+
+@dataclass
+class ProjectNavigationResult:
+    success: bool
+    project_name: str
+    attempts: int
+    message: str
+    steps: list[str] = field(default_factory=list)
+
+
+class ProjectNavigator:
+    """Task 2: tìm và mở project theo tên trong giao diện CapCut."""
+
+    def __init__(self, backend: UIBackend, cfg: ProjectNavigationConfig | None = None) -> None:
+        self.backend = backend
+        self.cfg = cfg or ProjectNavigationConfig()
+
+    @staticmethod
+    def _get_window_rect(hwnd: int) -> WindowRect | None:
+        if not hasattr(ctypes, "windll") or not hwnd:
+            return None
+
+        user32 = ctypes.windll.user32
+        rect = ctypes.wintypes.RECT()  # type: ignore[attr-defined]
+        ok = user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        if not ok:
+            return None
+        return WindowRect(rect.left, rect.top, rect.right, rect.bottom)
+
+    def _click_project_result_slot(self, hwnd: int) -> bool:
+        rect = self._get_window_rect(hwnd)
+        if rect is None or rect.width <= 0 or rect.height <= 0:
+            return False
+
+        x = int(rect.left + rect.width * self.cfg.result_click_x_ratio)
+        y = int(rect.top + rect.height * self.cfg.result_click_y_ratio)
+        self.backend.click_abs(x, y, clicks=2)
+        return True
+
+    def open_project(self, hwnd: int, project_name: str) -> ProjectNavigationResult:
+        name = (project_name or "").strip()
+        if not name:
+            return ProjectNavigationResult(
+                success=False,
+                project_name=project_name,
+                attempts=0,
+                message="project_name is empty",
+                steps=["validate:empty_project_name"],
+            )
+
+        steps: list[str] = []
+        for attempt in range(1, max(1, self.cfg.retries) + 1):
+            try:
+                steps.append(f"attempt#{attempt}:reset_to_home")
+                for _ in range(max(1, self.cfg.esc_reset_count)):
+                    self.backend.press("esc")
+                    time.sleep(0.15)
+
+                steps.append(f"attempt#{attempt}:open_search")
+                self.backend.hotkey("ctrl", "f")
+                time.sleep(0.15)
+                self.backend.hotkey("ctrl", "a")
+                self.backend.press("backspace")
+                self.backend.write(name)
+                self.backend.press("enter")
+                time.sleep(max(0.3, self.cfg.after_search_wait_seconds))
+
+                steps.append(f"attempt#{attempt}:open_first_result")
+                if not self._click_project_result_slot(hwnd):
+                    return ProjectNavigationResult(
+                        success=False,
+                        project_name=name,
+                        attempts=attempt,
+                        message="cannot resolve CapCut window rect for result click",
+                        steps=steps,
+                    )
+
+                time.sleep(max(0.3, self.cfg.after_open_wait_seconds))
+                steps.append(f"attempt#{attempt}:project_opened_wait_done")
+                return ProjectNavigationResult(
+                    success=True,
+                    project_name=name,
+                    attempts=attempt,
+                    message="project navigation done",
+                    steps=steps,
+                )
+            except Exception as exc:  # pragma: no cover - runtime UI branch
+                steps.append(f"attempt#{attempt}:error={exc}")
+                time.sleep(0.4)
+
+        return ProjectNavigationResult(
+            success=False,
+            project_name=name,
+            attempts=max(1, self.cfg.retries),
+            message="project navigation failed after retries",
+            steps=steps,
+        )
 
 
 def default_capcut_exe_candidates() -> list[str]:

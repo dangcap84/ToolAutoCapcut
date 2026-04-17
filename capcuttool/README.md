@@ -62,8 +62,14 @@ Current scope (step-by-step foundation):
 - Launch CapCut from common executable paths.
 - Detect CapCut main window by title hint.
 - Normalize window state (maximize or fixed-size policy).
+- Navigate project by name (Ctrl+F search + open first result slot with configurable coordinates).
 
-This is the base layer only (session/window control). Project navigation, Export button detection, and progress/100% loop will be implemented in next tasks.
+Implemented classes:
+- `CapCutSessionController`
+- `ProjectNavigator` + `ProjectNavigationConfig`
+- `PyAutoGUIBackend` (optional runtime dependency)
+
+Next tasks: Export button detection/click, progress-to-100% tracking, and full loop per project.
 
 ### Run on VPS/Linux (test)
 ```bash
