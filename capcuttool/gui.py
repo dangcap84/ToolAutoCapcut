@@ -86,7 +86,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v1.0.1")
+        self.root.title("CapCut Sync v1.0.2")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -2083,8 +2083,8 @@ class CapCutGui:
                     backend,
                     ExportProgressConfig(
                         timeout_seconds=60.0 * 6.0,
-                        poll_interval_seconds=2.0,
-                        max_wait_without_template_seconds=35.0,
+                        poll_interval_seconds=1.0,
+                        max_wait_without_template_seconds=8.0,
                     ),
                 )
                 runner = BatchExportRunner(

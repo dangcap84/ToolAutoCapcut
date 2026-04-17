@@ -266,6 +266,8 @@ class ProjectNavigationConfig:
     retries: int = 3
     result_open_clicks: int = 3
     result_fallback_y_step_ratio: float = 0.055
+    require_project_title_match: bool = True
+    allow_title_change_fallback: bool = True
 
 
 @dataclass
@@ -310,8 +312,23 @@ class ProjectNavigator:
         for y in candidates:
             self.backend.click_abs(x, y, clicks=max(1, int(self.cfg.result_open_clicks)))
             time.sleep(0.2)
+            # fallback bàn phím: nhiều build CapCut mở project ổn hơn bằng Enter
+            self.backend.press("enter")
+            time.sleep(0.15)
 
         return True
+
+    @staticmethod
+    def _get_window_title(hwnd: int) -> str:
+        if not hasattr(ctypes, "windll") or not hwnd:
+            return ""
+        user32 = ctypes.windll.user32
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return ""
+        buff = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buff, length + 1)
+        return (buff.value or "").strip()
 
     def open_project(self, hwnd: int, project_name: str) -> ProjectNavigationResult:
         name = (project_name or "").strip()
@@ -325,12 +342,17 @@ class ProjectNavigator:
             )
 
         steps: list[str] = []
+        last_title = ""
         for attempt in range(1, max(1, self.cfg.retries) + 1):
             try:
                 steps.append(f"attempt#{attempt}:reset_to_home")
                 for _ in range(max(1, self.cfg.esc_reset_count)):
                     self.backend.press("esc")
                     time.sleep(0.15)
+
+                before_title = self._get_window_title(hwnd)
+                if before_title:
+                    steps.append(f"attempt#{attempt}:title_before={before_title}")
 
                 steps.append(f"attempt#{attempt}:open_search")
                 self.backend.hotkey("ctrl", "f")
@@ -352,6 +374,32 @@ class ProjectNavigator:
                     )
 
                 time.sleep(max(0.3, self.cfg.after_open_wait_seconds))
+                after_title = self._get_window_title(hwnd)
+                last_title = after_title or last_title
+                if after_title:
+                    steps.append(f"attempt#{attempt}:title_after={after_title}")
+
+                # Guard: tránh báo success giả khi click không mở được project.
+                if self.cfg.require_project_title_match:
+                    n = name.lower()
+                    bt = (before_title or "").lower()
+                    at = (after_title or "").lower()
+                    title_has_project = bool(n and at and n in at)
+                    title_changed = bool(at and bt and at != bt and "capcut" in at)
+
+                    if title_has_project or (self.cfg.allow_title_change_fallback and title_changed):
+                        steps.append(f"attempt#{attempt}:project_opened_verified")
+                        return ProjectNavigationResult(
+                            success=True,
+                            project_name=name,
+                            attempts=attempt,
+                            message="project navigation done",
+                            steps=steps,
+                        )
+
+                    steps.append(f"attempt#{attempt}:project_open_not_verified")
+                    continue
+
                 steps.append(f"attempt#{attempt}:project_opened_wait_done")
                 return ProjectNavigationResult(
                     success=True,
@@ -364,11 +412,14 @@ class ProjectNavigator:
                 steps.append(f"attempt#{attempt}:error={exc}")
                 time.sleep(0.4)
 
+        fail_msg = "project navigation failed after retries"
+        if last_title:
+            fail_msg += f"; last_title={last_title}"
         return ProjectNavigationResult(
             success=False,
             project_name=name,
             attempts=max(1, self.cfg.retries),
-            message="project navigation failed after retries",
+            message=fail_msg,
             steps=steps,
         )
 
@@ -532,7 +583,7 @@ class ExportProgressConfig:
     progress_100_template: str | None = None
     export_panel_template: str | None = None
     template_confidence: float = 0.82
-    max_wait_without_template_seconds: float = 35.0
+    max_wait_without_template_seconds: float = 8.0
 
 
 @dataclass
@@ -598,13 +649,14 @@ class ExportProgressWatcher:
                 panel_visible = self._seen_template(self.cfg.export_panel_template)
                 steps.append(f"panel_visible={int(panel_visible)}")
 
-            # Không có template thì fail sớm để tránh treo loading nhiều phút.
-            if (not has_any_template) and elapsed >= max(8.0, self.cfg.max_wait_without_template_seconds):
+            # Không có template thì fail rất sớm để user thấy lỗi rõ ngay,
+            # tránh cảm giác treo hoặc đợi quá lâu.
+            if (not has_any_template) and elapsed >= max(3.0, self.cfg.max_wait_without_template_seconds):
                 return ExportProgressResult(
                     success=False,
                     reached_done=False,
                     elapsed_seconds=elapsed,
-                    message="missing progress templates; stopped early to avoid hanging",
+                    message="missing progress templates; cannot verify export completion",
                     steps=steps,
                 )
 
