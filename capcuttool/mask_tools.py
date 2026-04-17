@@ -531,7 +531,8 @@ def apply_mask_to_draft(
     ]
     bg_added = _register_background_catalog(bg_paths, background_catalog_path)
 
-    seg_support_refs = _ensure_segment_support_refs(materials, include_mask_id=mask_mat["id"])
+    # Background/main line không được gắn mask ref, nếu không sẽ bị ăn mask ngoài ý muốn.
+    seg_support_refs = _ensure_segment_support_refs(materials)
 
     if bg_paths:
         seg_template = _clone(main_segments[0])
