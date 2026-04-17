@@ -128,6 +128,7 @@ def _build_mask_material(
     overlay_width: float,
     overlay_height: float,
     round_corner: float,
+    mode: str,
     canvas_w: float,
     canvas_h: float,
     template_mask: dict[str, Any] | None,
@@ -171,10 +172,16 @@ def _build_mask_material(
     obj.setdefault("is_old_version", False)
 
     cfg = obj.get("config") if isinstance(obj.get("config"), dict) else {}
-    # Chuẩn hóa theo baseline mask-space để khớp behavior project mask chuẩn.
-    # (Không clamp max=1.0 vì có case width/height > 1.0 vẫn hợp lệ.)
-    w_norm = max(0.01, float(overlay_width) / _MASK_BASELINE_W)
-    h_norm = max(0.01, float(overlay_height) / _MASK_BASELINE_H)
+    mode_norm = str(mode or "params").strip().lower()
+    if mode_norm == "ratio":
+        # Mode tỉ lệ: map trực tiếp theo khung hình (90 => 0.9 khung), tránh tràn.
+        w_norm = max(0.01, float(overlay_width) / max(1.0, float(canvas_w)))
+        h_norm = max(0.01, float(overlay_height) / max(1.0, float(canvas_h)))
+    else:
+        # Mode thông số: giữ baseline mask-space để khớp behavior thực tế trước đó.
+        # (Không clamp max=1.0 vì có case width/height > 1.0 vẫn hợp lệ.)
+        w_norm = max(0.01, float(overlay_width) / _MASK_BASELINE_W)
+        h_norm = max(0.01, float(overlay_height) / _MASK_BASELINE_H)
     cfg["width"] = w_norm
     cfg["height"] = h_norm
     # Giữ đúng tỷ lệ theo input W/H để kích thước hiển thị khớp thiết lập.
@@ -509,6 +516,7 @@ def apply_mask_to_draft(
         overlay_width=overlay_width,
         overlay_height=overlay_height,
         round_corner=round_corner,
+        mode=mode,
         canvas_w=canvas_w,
         canvas_h=canvas_h,
         template_mask=template_mask,
