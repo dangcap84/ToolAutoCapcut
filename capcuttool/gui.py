@@ -37,6 +37,20 @@ from transition_tools import (
 from keyframe_tools import apply_zoom_keyframes_to_draft
 from mask_tools import apply_mask_to_draft
 from mask_library import load_mask_background_library, seed_mask_background_cache
+from export_automation import (
+    BatchExportConfig,
+    BatchExportRunner,
+    CapCutSessionController,
+    ExportActionConfig,
+    ExportActionRunner,
+    ExportProgressConfig,
+    ExportProgressWatcher,
+    ProjectNavigationConfig,
+    ProjectNavigator,
+    PyAutoGUIBackend,
+    WindowPolicy,
+    default_capcut_exe_candidates,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CAPCUT_PROJECT_ROOT = Path(
@@ -72,7 +86,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.59")
+        self.root.title("CapCut Sync v3.9.60")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -232,6 +246,7 @@ class CapCutGui:
         self.projects_canvas_window: int | None = None
         self.projects_scroll: tk.Scrollbar | None = None
         self.refresh_button: ttk.Button | None = None
+        self.export_publish_button: ttk.Button | None = None
         self.sync_button: ttk.Button | None = None
         self.batch_button: ttk.Button | None = None
         self.apply_transition_button: ttk.Button | None = None
@@ -642,6 +657,15 @@ class CapCutGui:
             style="Secondary.TButton",
         )
         self.refresh_button.grid(row=0, column=1, sticky="e")
+
+        self.export_publish_button = ttk.Button(
+            projects_header,
+            text="Xuất bản",
+            command=self._on_export_selected_projects,
+            width=12,
+            style="Accent.TButton",
+        )
+        self.export_publish_button.grid(row=0, column=2, sticky="e", padx=(8, 0))
 
         list_host = ttk.Frame(projects_card, style="Panel.TFrame")
         list_host.grid(row=1, column=0, sticky=NSEW)
@@ -1996,6 +2020,113 @@ class CapCutGui:
         self.mode_var.set("sync")
         self._start_run()
 
+    def _on_export_selected_projects(self) -> None:
+        if self.current_process is not None or self.current_task_running:
+            messagebox.showwarning("Đang bận", "Đang có tiến trình chạy. Vui lòng chờ xong.")
+            return
+
+        selected_projects = self._collect_selected_projects()
+        if not selected_projects:
+            messagebox.showerror("Chưa chọn dự án", "Vui lòng chọn ít nhất 1 dự án trong danh sách.")
+            return
+        if not self._confirm_bulk_action("xuất bản", selected_projects):
+            return
+
+        project_names = [Path(p).name for p in selected_projects]
+        self.current_action = "export_publish"
+        self._append_log("\n--- Xuất bản project đã chọn ---\n")
+        self._append_log(f"projects={len(project_names)} mode=auto_export\n")
+        self._set_status(f"Đang xuất bản {len(project_names)} dự án đã chọn...", "info")
+        self._set_running_state(True)
+        self.current_task_running = True
+
+        threading.Thread(
+            target=self._execute_export_selected_projects,
+            args=(project_names,),
+            daemon=True,
+        ).start()
+
+    def _execute_export_selected_projects(self, project_names: list[str]) -> None:
+        output_buf = io.StringIO()
+        overall_code = 0
+
+        try:
+            with contextlib.redirect_stdout(output_buf):
+                backend = PyAutoGUIBackend(pause_seconds=0.07)
+                session = CapCutSessionController(title_hint="CapCut")
+                navigator = ProjectNavigator(
+                    backend,
+                    ProjectNavigationConfig(
+                        result_click_x_ratio=0.23,
+                        result_click_y_ratio=0.30,
+                        esc_reset_count=2,
+                        after_open_wait_seconds=2.0,
+                        after_search_wait_seconds=1.1,
+                        retries=2,
+                    ),
+                )
+                exporter = ExportActionRunner(
+                    backend,
+                    ExportActionConfig(
+                        export_btn_x_ratio=0.93,
+                        export_btn_y_ratio=0.06,
+                        confirm_btn_x_ratio=0.83,
+                        confirm_btn_y_ratio=0.90,
+                        search_retries=3,
+                        click_retries=2,
+                        post_export_wait_seconds=1.0,
+                        post_confirm_wait_seconds=1.2,
+                    ),
+                )
+                watcher = ExportProgressWatcher(
+                    backend,
+                    ExportProgressConfig(
+                        timeout_seconds=60.0 * 30.0,
+                        poll_interval_seconds=2.0,
+                    ),
+                )
+                runner = BatchExportRunner(
+                    session=session,
+                    navigator=navigator,
+                    exporter=exporter,
+                    watcher=watcher,
+                    backend=backend,
+                    exe_candidates=default_capcut_exe_candidates(),
+                    logger=print,
+                )
+
+                results = runner.run(
+                    BatchExportConfig(
+                        project_names=project_names,
+                        window_policy=WindowPolicy(mode="maximize"),
+                        relaunch_each_project=True,
+                        launch_timeout_seconds=25.0,
+                        close_wait_seconds=3.0,
+                        screenshot_on_fail_dir=str(BASE_DIR / "export_failshots"),
+                    )
+                )
+
+                success_count = sum(1 for r in results if r.success)
+                fail_count = len(results) - success_count
+                print("--- export summary ---")
+                print(f"total={len(results)} success={success_count} fail={fail_count}")
+                for r in results:
+                    print(
+                        f"project={r.project_name} success={int(r.success)} stage={r.stage} elapsed={r.elapsed_seconds:.1f}s message={r.message}"
+                    )
+
+                if fail_count > 0:
+                    overall_code = 1
+
+        except Exception:
+            output_buf.write(traceback.format_exc())
+            overall_code = 1
+
+        out = output_buf.getvalue()
+        if out:
+            self.log_queue.put(out)
+        self.log_queue.put(f"PROCESS_EXIT:{overall_code}")
+
     def _start_run(self) -> None:
         if self.current_process is not None or self.current_task_running:
             messagebox.showwarning("Busy", "A run is already in progress.")
@@ -2224,6 +2355,7 @@ class CapCutGui:
         is_transition_apply = self.current_action == "transition_apply"
         is_keyframe_apply = self.current_action == "keyframe_apply"
         is_mask_apply = self.current_action == "mask_apply"
+        is_export_publish = self.current_action == "export_publish"
 
         if is_batch:
             success_title = "Tạo batch xong"
@@ -2249,6 +2381,12 @@ class CapCutGui:
             error_title = "Áp dụng mask lỗi"
             ok_status = "Áp dụng mask thành công"
             err_status = f"Áp dụng mask lỗi (mã {return_code})"
+        elif is_export_publish:
+            success_title = "Xuất bản xong"
+            success_message = "Đã xuất bản các dự án đã chọn."
+            error_title = "Xuất bản lỗi"
+            ok_status = "Xuất bản thành công"
+            err_status = f"Xuất bản lỗi (mã {return_code})"
         else:
             success_title = "Đồng bộ xong"
             success_message = "Đã đồng bộ các dự án đã chọn thành công."
@@ -2280,6 +2418,8 @@ class CapCutGui:
             self.sync_button.configure(state=new_state)
         if self.refresh_button is not None:
             self.refresh_button.configure(state=new_state)
+        if self.export_publish_button is not None:
+            self.export_publish_button.configure(state=new_state)
         if self.batch_button is not None:
             self.batch_button.configure(state=new_state)
         if self.apply_transition_button is not None:
