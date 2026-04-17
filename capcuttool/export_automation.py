@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Protocol
 
+_CREATE_NO_WINDOW = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
 
 @dataclass
 class WindowPolicy:
@@ -72,6 +74,7 @@ class CapCutSessionController:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False,
+                creationflags=_CREATE_NO_WINDOW,
             )
 
         time.sleep(max(0.0, timeout_seconds))
@@ -86,7 +89,12 @@ class CapCutSessionController:
             if not p.exists():
                 continue
 
-            proc = subprocess.Popen([str(p)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            proc = subprocess.Popen(
+                [str(p)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=_CREATE_NO_WINDOW,
+            )
             deadline = time.time() + max(1.0, timeout_seconds)
             hwnd = None
             while time.time() < deadline:
@@ -233,9 +241,11 @@ class ProjectNavigationConfig:
     result_click_x_ratio: float = 0.23
     result_click_y_ratio: float = 0.30
     esc_reset_count: int = 2
-    after_open_wait_seconds: float = 2.0
-    after_search_wait_seconds: float = 1.1
-    retries: int = 2
+    after_open_wait_seconds: float = 2.5
+    after_search_wait_seconds: float = 1.3
+    retries: int = 3
+    result_open_clicks: int = 3
+    result_fallback_y_step_ratio: float = 0.055
 
 
 @dataclass
@@ -272,8 +282,15 @@ class ProjectNavigator:
             return False
 
         x = int(rect.left + rect.width * self.cfg.result_click_x_ratio)
-        y = int(rect.top + rect.height * self.cfg.result_click_y_ratio)
-        self.backend.click_abs(x, y, clicks=2)
+        base_y = int(rect.top + rect.height * self.cfg.result_click_y_ratio)
+        y_step = int(max(8, rect.height * self.cfg.result_fallback_y_step_ratio))
+
+        # thử vài vị trí theo trục dọc để bám vào item thật sự trong list
+        candidates = [base_y, base_y + y_step, base_y - y_step]
+        for y in candidates:
+            self.backend.click_abs(x, y, clicks=max(1, int(self.cfg.result_open_clicks)))
+            time.sleep(0.2)
+
         return True
 
     def open_project(self, hwnd: int, project_name: str) -> ProjectNavigationResult:
@@ -489,12 +506,13 @@ class ExportActionRunner:
 class ExportProgressConfig:
     """Task 4: theo dõi tiến trình export tới 100%/done."""
 
-    timeout_seconds: float = 60.0 * 30.0
+    timeout_seconds: float = 60.0 * 6.0
     poll_interval_seconds: float = 2.0
     done_template: str | None = None
     progress_100_template: str | None = None
     export_panel_template: str | None = None
     template_confidence: float = 0.82
+    max_wait_without_template_seconds: float = 35.0
 
 
 @dataclass
@@ -530,6 +548,7 @@ class ExportProgressWatcher:
         steps: list[str] = []
         start = time.time()
         deadline = start + max(5.0, self.cfg.timeout_seconds)
+        has_any_template = bool(self.cfg.done_template or self.cfg.progress_100_template or self.cfg.export_panel_template)
 
         while time.time() < deadline:
             elapsed = time.time() - start
@@ -555,10 +574,19 @@ class ExportProgressWatcher:
                     steps=steps,
                 )
 
-            # Nếu panel export biến mất sau khi đã từng xuất hiện, cũng coi là completed best-effort.
             if self.cfg.export_panel_template:
                 panel_visible = self._seen_template(self.cfg.export_panel_template)
                 steps.append(f"panel_visible={int(panel_visible)}")
+
+            # Không có template thì fail sớm để tránh treo loading nhiều phút.
+            if (not has_any_template) and elapsed >= max(8.0, self.cfg.max_wait_without_template_seconds):
+                return ExportProgressResult(
+                    success=False,
+                    reached_done=False,
+                    elapsed_seconds=elapsed,
+                    message="missing progress templates; stopped early to avoid hanging",
+                    steps=steps,
+                )
 
             time.sleep(max(0.2, self.cfg.poll_interval_seconds))
 

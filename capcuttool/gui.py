@@ -86,7 +86,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.61")
+        self.root.title("CapCut Sync v1.0.0")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -2059,10 +2059,11 @@ class CapCutGui:
                     ProjectNavigationConfig(
                         result_click_x_ratio=0.23,
                         result_click_y_ratio=0.30,
-                        esc_reset_count=2,
-                        after_open_wait_seconds=2.0,
-                        after_search_wait_seconds=1.1,
-                        retries=2,
+                        esc_reset_count=3,
+                        after_open_wait_seconds=2.5,
+                        after_search_wait_seconds=1.3,
+                        retries=3,
+                        result_open_clicks=3,
                     ),
                 )
                 exporter = ExportActionRunner(
@@ -2081,8 +2082,9 @@ class CapCutGui:
                 watcher = ExportProgressWatcher(
                     backend,
                     ExportProgressConfig(
-                        timeout_seconds=60.0 * 30.0,
+                        timeout_seconds=60.0 * 6.0,
                         poll_interval_seconds=2.0,
+                        max_wait_without_template_seconds=35.0,
                     ),
                 )
                 runner = BatchExportRunner(
@@ -2105,6 +2107,14 @@ class CapCutGui:
                         screenshot_on_fail_dir=str(BASE_DIR / "export_failshots"),
                     )
                 )
+
+                # Nếu toàn bộ fail ở navigate/progress thì báo rõ để user thấy ngay,
+                # tránh cảm giác treo loading im lặng.
+                if results and all((not r.success) for r in results):
+                    first = results[0]
+                    print(
+                        f"ERROR_HINT: first_failure_stage={first.stage} message={first.message}"
+                    )
 
                 success_count = sum(1 for r in results if r.success)
                 fail_count = len(results) - success_count
