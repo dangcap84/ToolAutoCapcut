@@ -287,6 +287,28 @@ class ProjectNavigator:
         self.cfg = cfg or ProjectNavigationConfig()
 
     @staticmethod
+    def _focus_window(hwnd: int) -> bool:
+        if not hasattr(ctypes, "windll") or not hwnd:
+            return False
+        user32 = ctypes.windll.user32
+        SW_RESTORE = 9
+        user32.ShowWindow(hwnd, SW_RESTORE)
+        time.sleep(0.05)
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+        return True
+
+    def _activate_capcut_surface(self, hwnd: int) -> bool:
+        rect = self._get_window_rect(hwnd)
+        if rect is None or rect.width <= 0 or rect.height <= 0:
+            return False
+        x = int(rect.left + rect.width * 0.50)
+        y = int(rect.top + min(72, max(28, rect.height * 0.08)))
+        self.backend.click_abs(x, y, clicks=1)
+        time.sleep(0.1)
+        return True
+
+    @staticmethod
     def _get_window_rect(hwnd: int) -> WindowRect | None:
         if not hasattr(ctypes, "windll") or not hwnd:
             return None
@@ -345,6 +367,10 @@ class ProjectNavigator:
         last_title = ""
         for attempt in range(1, max(1, self.cfg.retries) + 1):
             try:
+                steps.append(f"attempt#{attempt}:focus_capcut_window")
+                self._focus_window(hwnd)
+                self._activate_capcut_surface(hwnd)
+
                 steps.append(f"attempt#{attempt}:reset_to_home")
                 for _ in range(max(1, self.cfg.esc_reset_count)):
                     self.backend.press("esc")
@@ -461,6 +487,18 @@ class ExportActionRunner:
         self.cfg = cfg or ExportActionConfig()
 
     @staticmethod
+    def _focus_window(hwnd: int) -> bool:
+        if not hasattr(ctypes, "windll") or not hwnd:
+            return False
+        user32 = ctypes.windll.user32
+        SW_RESTORE = 9
+        user32.ShowWindow(hwnd, SW_RESTORE)
+        time.sleep(0.05)
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+        return True
+
+    @staticmethod
     def _get_window_rect(hwnd: int) -> WindowRect | None:
         if not hasattr(ctypes, "windll") or not hwnd:
             return None
@@ -500,6 +538,7 @@ class ExportActionRunner:
         for attempt in range(1, max(1, self.cfg.search_retries) + 1):
             try:
                 steps.append(f"attempt#{attempt}:focus_editor")
+                self._focus_window(hwnd)
                 self.backend.press("esc")
                 time.sleep(0.15)
 
