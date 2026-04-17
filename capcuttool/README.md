@@ -36,8 +36,34 @@ python3 cli.py \
   --backup
 ```
 
+Sync + thêm transition ngẫu nhiên:
+```bash
+python3 cli.py \
+  --project "..." \
+  --images "..." \
+  --voices "..." \
+  --mode sync \
+  --transition-mode random \
+  --transition-effects "6864867302936941064,7406274848898583813"
+```
+
+Ghi chú transition:
+- Tool thêm transition vào `materials.transitions` và gắn ref transition vào `extra_material_refs` của từng segment video (từ segment thứ 2 trở đi).
+- `--transition-effects` để trống => random từ toàn bộ catalog tìm thấy trong cache CapCut + fallback từ project mẫu.
+- Có thể override đường dẫn cache bằng `--transition-effect-cache-root`.
+
 ## GUI (Tkinter MVP)
 This repo includes a lightweight GUI wrapper (`gui.py`) for running the CLI.
+
+## Auto Export (WIP skeleton)
+A new helper module `export_automation.py` has been added to prepare reliable UI-based export flow on Windows.
+Current scope (step-by-step foundation):
+- Close existing CapCut instances (`taskkill`) for clean state.
+- Launch CapCut from common executable paths.
+- Detect CapCut main window by title hint.
+- Normalize window state (maximize or fixed-size policy).
+
+This is the base layer only (session/window control). Project navigation, Export button detection, and progress/100% loop will be implemented in next tasks.
 
 ### Run on VPS/Linux (test)
 ```bash
