@@ -72,7 +72,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v3.9.55")
+        self.root.title("CapCut Sync v3.9.56")
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -211,11 +211,14 @@ class CapCutGui:
         self.keyframe_full_duration_var = tk.BooleanVar(value=True)
         self.keyframe_duration_seconds_var = tk.StringVar(value="3.0")
 
+        self.mask_mode_var = tk.StringVar(value="params")
         self.mask_overlay_width_var = tk.StringVar(value="1800")
         self.mask_overlay_height_var = tk.StringVar(value="928")
         self.mask_round_corner_var = tk.StringVar(value="20")
         self.mask_scale_percent_var = tk.StringVar(value="90")
         self.mask_backgrounds_var = tk.StringVar(value="")
+        self.mask_inputs_params_frame: ttk.Frame | None = None
+        self.mask_inputs_ratio_frame: ttk.Frame | None = None
         self.mask_library_catalog: list[dict] = []
         self.mask_library_check_vars: list[tk.BooleanVar] = []
         self.mask_check_all_var = tk.BooleanVar(value=False)
@@ -242,6 +245,7 @@ class CapCutGui:
         self._wire_events()
         self.keyframe_mode_var.trace_add("write", lambda *_: self._on_keyframe_mode_changed())
         self._on_keyframe_mode_changed()
+        self._on_mask_mode_changed()
         self._refresh_template_info_label()
 
         self.root.after(100, self._flush_log)
@@ -530,25 +534,33 @@ class CapCutGui:
         )
         mask_card.grid(row=0, column=0, sticky=NSEW)
         mask_card.columnconfigure(1, weight=1)
-        mask_card.rowconfigure(7, weight=1)
+        mask_card.rowconfigure(6, weight=1)
 
-        ttk.Label(mask_card, text="Overlay W:", style="Subtle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Entry(mask_card, textvariable=self.mask_overlay_width_var, style="Search.TEntry", width=9).grid(row=0, column=1, sticky="w", padx=(6, 0))
+        mode_row = ttk.Frame(mask_card, style="Panel.TFrame")
+        mode_row.grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(mode_row, text="Mode:", style="Subtle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(mode_row, text="Thông số", variable=self.mask_mode_var, value="params", command=self._on_mask_mode_changed).grid(row=0, column=1, sticky="w", padx=(8, 8))
+        ttk.Radiobutton(mode_row, text="Tỉ lệ", variable=self.mask_mode_var, value="ratio", command=self._on_mask_mode_changed).grid(row=0, column=2, sticky="w")
 
-        ttk.Label(mask_card, text="Overlay H:", style="Subtle.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
-        ttk.Entry(mask_card, textvariable=self.mask_overlay_height_var, style="Search.TEntry", width=9).grid(row=1, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
+        self.mask_inputs_params_frame = ttk.Frame(mask_card, style="Panel.TFrame")
+        self.mask_inputs_params_frame.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        self.mask_inputs_params_frame.columnconfigure(1, weight=1)
+        ttk.Label(self.mask_inputs_params_frame, text="Overlay W:", style="Subtle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Entry(self.mask_inputs_params_frame, textvariable=self.mask_overlay_width_var, style="Search.TEntry", width=9).grid(row=0, column=1, sticky="w", padx=(6, 0))
+        ttk.Label(self.mask_inputs_params_frame, text="Overlay H:", style="Subtle.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Entry(self.mask_inputs_params_frame, textvariable=self.mask_overlay_height_var, style="Search.TEntry", width=9).grid(row=1, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
+        ttk.Label(self.mask_inputs_params_frame, text="Bo góc mask (0..100):", style="Subtle.TLabel").grid(row=2, column=0, sticky="w", pady=(4, 0))
+        ttk.Entry(self.mask_inputs_params_frame, textvariable=self.mask_round_corner_var, style="Search.TEntry", width=9).grid(row=2, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
 
-        ttk.Label(mask_card, text="Bo góc mask (0..100):", style="Subtle.TLabel").grid(row=2, column=0, sticky="w", pady=(4, 0))
-        ttk.Entry(mask_card, textvariable=self.mask_round_corner_var, style="Search.TEntry", width=9).grid(row=2, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
-
-        ttk.Label(mask_card, text="Tỉ lệ mask/background (%):", style="Subtle.TLabel").grid(row=3, column=0, sticky="w", pady=(4, 0))
-        ttk.Entry(mask_card, textvariable=self.mask_scale_percent_var, style="Search.TEntry", width=9).grid(row=3, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
-
-        ttk.Label(mask_card, text="Background path (tuỳ chọn):", style="Subtle.TLabel").grid(row=4, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(mask_card, textvariable=self.mask_backgrounds_var, style="Search.TEntry").grid(row=4, column=1, columnspan=2, sticky=EW, padx=(6, 0), pady=(6, 0))
+        self.mask_inputs_ratio_frame = ttk.Frame(mask_card, style="Panel.TFrame")
+        self.mask_inputs_ratio_frame.columnconfigure(1, weight=1)
+        ttk.Label(self.mask_inputs_ratio_frame, text="Tỉ lệ mask/background (%):", style="Subtle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Entry(self.mask_inputs_ratio_frame, textvariable=self.mask_scale_percent_var, style="Search.TEntry", width=9).grid(row=0, column=1, sticky="w", padx=(6, 0))
+        ttk.Label(self.mask_inputs_ratio_frame, text="Bo góc mask (0..100):", style="Subtle.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Entry(self.mask_inputs_ratio_frame, textvariable=self.mask_round_corner_var, style="Search.TEntry", width=9).grid(row=1, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
 
         action_row = ttk.Frame(mask_card, style="Panel.TFrame")
-        action_row.grid(row=5, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        action_row.grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         self.apply_mask_button = ttk.Button(
             action_row,
@@ -559,10 +571,10 @@ class CapCutGui:
         )
         self.apply_mask_button.grid(row=0, column=0, sticky="w")
 
-        ttk.Label(mask_card, text="Background có sẵn (embedded trong EXE):", style="Subtle.TLabel").grid(row=6, column=0, columnspan=3, sticky="w", pady=(8, 4))
+        ttk.Label(mask_card, text="Background có sẵn (embedded trong EXE):", style="Subtle.TLabel").grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 4))
 
         mask_lib_host = ttk.Frame(mask_card, style="Panel.TFrame")
-        mask_lib_host.grid(row=7, column=0, columnspan=3, sticky=NSEW)
+        mask_lib_host.grid(row=6, column=0, columnspan=3, sticky=NSEW)
         mask_lib_host.columnconfigure(0, weight=1)
         mask_lib_host.rowconfigure(0, weight=1)
         mask_lib_host.configure(height=130)
@@ -1630,6 +1642,17 @@ class CapCutGui:
     def _on_refresh_mask_library(self) -> None:
         self._load_mask_library_to_input(show_message=True)
 
+    def _on_mask_mode_changed(self) -> None:
+        mode = str(self.mask_mode_var.get() or "params").strip().lower()
+        if self.mask_inputs_params_frame is None or self.mask_inputs_ratio_frame is None:
+            return
+        if mode == "ratio":
+            self.mask_inputs_params_frame.grid_remove()
+            self.mask_inputs_ratio_frame.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        else:
+            self.mask_inputs_ratio_frame.grid_remove()
+            self.mask_inputs_params_frame.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+
     def _get_selected_mask_library_paths(self) -> list[str]:
         out: list[str] = []
         for idx, item in enumerate(self.mask_library_catalog):
@@ -1643,38 +1666,53 @@ class CapCutGui:
         return out
 
     def _validate_mask_inputs(self) -> tuple[float, float, float, float, list[str]] | None:
+        mode = str(self.mask_mode_var.get() or "params").strip().lower()
+
         try:
-            w = float(self.mask_overlay_width_var.get().strip())
-            h = float(self.mask_overlay_height_var.get().strip())
             rc = float(self.mask_round_corner_var.get().strip())
-            scale_pct = float(self.mask_scale_percent_var.get().strip())
         except ValueError:
-            messagebox.showerror("Thiếu input", "Overlay W/H/Bo góc/Tỉ lệ phải là số hợp lệ.")
+            messagebox.showerror("Thiếu input", "Bo góc mask phải là số hợp lệ.")
             return None
 
-        if w <= 0 or h <= 0:
-            messagebox.showerror("Input không hợp lệ", "Overlay W/H phải > 0.")
-            return None
-        if w > 8000 or h > 8000:
-            messagebox.showerror("Input không hợp lệ", "Overlay W/H quá lớn (<= 8000).")
-            return None
         if rc < 0 or rc > 100:
             messagebox.showerror("Input không hợp lệ", "Bo góc mask phải nằm trong 0..100.")
             return None
-        if scale_pct < 1 or scale_pct > 300:
-            messagebox.showerror("Input không hợp lệ", "Tỉ lệ mask/background phải nằm trong 1..300 (%).")
-            return None
 
-        manual_paths = self._parse_background_paths(self.mask_backgrounds_var.get())
+        if mode == "ratio":
+            try:
+                scale_pct = float(self.mask_scale_percent_var.get().strip())
+            except ValueError:
+                messagebox.showerror("Thiếu input", "Tỉ lệ mask/background phải là số hợp lệ.")
+                return None
+            if scale_pct < 1 or scale_pct > 300:
+                messagebox.showerror("Input không hợp lệ", "Tỉ lệ mask/background phải nằm trong 1..300 (%).")
+                return None
+            # Mode tỉ lệ: ẩn W/H và dùng baseline mặc định.
+            w, h = 1800.0, 928.0
+        else:
+            try:
+                w = float(self.mask_overlay_width_var.get().strip())
+                h = float(self.mask_overlay_height_var.get().strip())
+            except ValueError:
+                messagebox.showerror("Thiếu input", "Overlay W/H phải là số hợp lệ.")
+                return None
+            if w <= 0 or h <= 0:
+                messagebox.showerror("Input không hợp lệ", "Overlay W/H phải > 0.")
+                return None
+            if w > 8000 or h > 8000:
+                messagebox.showerror("Input không hợp lệ", "Overlay W/H quá lớn (<= 8000).")
+                return None
+            # Mode thông số: ưu tiên W/H trực tiếp nên scale mặc định 100%.
+            scale_pct = 100.0
+
         selected_library_paths = self._get_selected_mask_library_paths()
-
-        if not selected_library_paths and not manual_paths:
+        if not selected_library_paths:
             messagebox.showerror("Thiếu background", "Chưa chọn background mask nào.")
             return None
 
         bg_paths: list[str] = []
         seen: set[str] = set()
-        for p in [*selected_library_paths, *manual_paths]:
+        for p in selected_library_paths:
             key = p.lower()
             if key in seen:
                 continue
