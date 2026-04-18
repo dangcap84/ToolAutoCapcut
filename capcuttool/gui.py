@@ -84,7 +84,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 
 I18N_TEXTS = {
     "vi": {
-        "app_title": "CapCut Sync v1.0.6",
+        "app_title": "CapCut Sync v1.0.7",
         "header_title": "Đồng bộ dự án CapCut",
         "header_subtitle": "Chọn dự án ở bên phải, sau đó chạy thao tác ở các tab chức năng.",
         "language": "Ngôn ngữ",
@@ -103,7 +103,7 @@ I18N_TEXTS = {
         "log_subtitle": "Nhật ký thao tác (đồng bộ / chuyển cảnh / keyframe / lỗi).",
     },
     "en": {
-        "app_title": "CapCut Sync v1.0.6",
+        "app_title": "CapCut Sync v1.0.7",
         "header_title": "CapCut Project Sync",
         "header_subtitle": "Select projects on the right, then run actions from feature tabs.",
         "language": "Language",

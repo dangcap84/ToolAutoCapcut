@@ -290,6 +290,8 @@ class ProjectNavigationConfig:
     max_scroll_pages: int = 8
     scroll_step: int = -650
     name_match_threshold: float = 0.58
+    use_keyboard_grid_scan: bool = True
+    scan_step_wait_seconds: float = 0.10
 
 
 @dataclass
@@ -353,6 +355,11 @@ class ProjectNavigator:
                 pts.append((x, y))
         return pts
 
+    def _grid_anchor_point(self, rect: WindowRect) -> tuple[int, int]:
+        x = int(rect.left + rect.width * self.cfg.first_card_x_ratio)
+        y = int(rect.top + rect.height * self.cfg.first_card_y_ratio)
+        return x, y
+
     def _read_clipboard_text(self) -> str:
         if not hasattr(ctypes, "windll"):
             return ""
@@ -380,40 +387,51 @@ class ProjectNavigator:
             return False
 
         target = project_name
-        points = self._iter_project_card_points(rect)
         best_score = 0.0
-        best_pt: tuple[int, int] | None = None
+
+        # Chỉ 1 click anchor vào grid CapCut rồi scan bằng bàn phím,
+        # tránh click loạn gây chiếm chuột.
+        ax, ay = self._grid_anchor_point(rect)
+        self.backend.click_abs(ax, ay, clicks=1)
+        time.sleep(0.12)
+        steps.append(f"scan:anchor_click@{ax},{ay}")
 
         for page in range(max(1, self.cfg.max_scroll_pages)):
             steps.append(f"scan:page#{page+1}")
-            for i, (x, y) in enumerate(points, start=1):
-                self.backend.click_abs(x, y, clicks=1)
-                time.sleep(0.08)
-                name = self._copy_current_selection_text()
-                if name:
-                    score = self._name_score(target, name)
-                    steps.append(f"scan:card#{i}:name={name}:score={score:.2f}")
-                    if score > best_score:
-                        best_score = score
-                        best_pt = (x, y)
-                    if score >= self.cfg.name_match_threshold:
-                        self.backend.click_abs(x, y, clicks=max(2, self.cfg.result_open_clicks))
-                        time.sleep(0.2)
-                        self.backend.press("enter")
-                        steps.append(f"scan:matched_opened:score={score:.2f}")
-                        return True
+
+            # Đưa con trỏ chọn về góc đầu grid (best-effort)
+            for _ in range(max(1, self.cfg.col_count)):
+                self.backend.press("left")
+            for _ in range(max(1, self.cfg.row_count)):
+                self.backend.press("up")
+            time.sleep(self.cfg.scan_step_wait_seconds)
+
+            for r in range(max(1, self.cfg.row_count)):
+                for c in range(max(1, self.cfg.col_count)):
+                    name = self._copy_current_selection_text()
+                    if name:
+                        score = self._name_score(target, name)
+                        steps.append(f"scan:r{r}c{c}:name={name}:score={score:.2f}")
+                        if score > best_score:
+                            best_score = score
+                        if score >= self.cfg.name_match_threshold:
+                            self.backend.press("enter")
+                            steps.append(f"scan:matched_opened:score={score:.2f}")
+                            return True
+
+                    if c < max(1, self.cfg.col_count) - 1:
+                        self.backend.press("right")
+                        time.sleep(self.cfg.scan_step_wait_seconds)
+
+                if r < max(1, self.cfg.row_count) - 1:
+                    for _ in range(max(0, self.cfg.col_count - 1)):
+                        self.backend.press("left")
+                    self.backend.press("down")
+                    time.sleep(self.cfg.scan_step_wait_seconds)
 
             if page < max(1, self.cfg.max_scroll_pages) - 1:
-                # scroll xuống để quét trang kế tiếp
-                self.backend.scroll(self.cfg.scroll_step)
-                time.sleep(0.2)
-
-        if best_pt and best_score >= max(0.45, self.cfg.name_match_threshold - 0.15):
-            self.backend.click_abs(best_pt[0], best_pt[1], clicks=max(2, self.cfg.result_open_clicks))
-            time.sleep(0.2)
-            self.backend.press("enter")
-            steps.append(f"scan:best_effort_open:score={best_score:.2f}")
-            return True
+                self.backend.press("pagedown")
+                time.sleep(max(0.15, self.cfg.scan_step_wait_seconds * 2))
 
         steps.append(f"scan:not_found:best_score={best_score:.2f}")
         return False
