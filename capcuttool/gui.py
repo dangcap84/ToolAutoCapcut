@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import ctypes
+import ctypes.wintypes
 import io
 import json
 import queue
@@ -85,7 +87,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 
 I18N_TEXTS = {
     "vi": {
-        "app_title": "CapCut Sync v1.0.8",
+        "app_title": "CapCut Sync v1.0.9",
         "header_title": "Đồng bộ dự án CapCut",
         "header_subtitle": "Chọn dự án ở bên phải, sau đó chạy thao tác ở các tab chức năng.",
         "language": "Ngôn ngữ",
@@ -98,6 +100,7 @@ I18N_TEXTS = {
         "refresh_button": "Làm mới",
         "publish_button": "Xuất bản",
         "test_click_button": "Test click #1",
+        "pick_region_button": "Khoanh vùng",
         "projects_group": "Dự án CapCut",
         "projects_selected": "Đã chọn {selected}/{total} dự án",
         "status_ready": "Sẵn sàng · Bấm Làm mới, chọn dự án rồi Đồng bộ",
@@ -105,7 +108,7 @@ I18N_TEXTS = {
         "log_subtitle": "Nhật ký thao tác (đồng bộ / chuyển cảnh / keyframe / lỗi).",
     },
     "en": {
-        "app_title": "CapCut Sync v1.0.8",
+        "app_title": "CapCut Sync v1.0.9",
         "header_title": "CapCut Project Sync",
         "header_subtitle": "Select projects on the right, then run actions from feature tabs.",
         "language": "Language",
@@ -118,6 +121,7 @@ I18N_TEXTS = {
         "refresh_button": "Refresh",
         "publish_button": "Publish",
         "test_click_button": "Test click #1",
+        "pick_region_button": "Pick region",
         "projects_group": "CapCut Projects",
         "projects_selected": "Selected {selected}/{total} projects",
         "status_ready": "Ready · Click Refresh, choose projects, then Sync",
@@ -303,6 +307,7 @@ class CapCutGui:
         self.refresh_button: ttk.Button | None = None
         self.export_publish_button: ttk.Button | None = None
         self.test_click_button: ttk.Button | None = None
+        self.pick_region_button: ttk.Button | None = None
         self.sync_button: ttk.Button | None = None
         self.batch_button: ttk.Button | None = None
         self.apply_transition_button: ttk.Button | None = None
@@ -378,6 +383,8 @@ class CapCutGui:
             self.export_publish_button.configure(text=self._t("publish_button"))
         if self.test_click_button is not None:
             self.test_click_button.configure(text=self._t("test_click_button"))
+        if self.pick_region_button is not None:
+            self.pick_region_button.configure(text=self._t("pick_region_button"))
 
         if self.projects_card is not None:
             self.projects_card.configure(text=self._t("projects_group"))
@@ -511,6 +518,15 @@ class CapCutGui:
         ttk.Entry(export_calib, textvariable=self.export_grid_gap_x_var, width=6, style="Search.TEntry").grid(row=1, column=5, sticky="w", padx=(4, 8), pady=(6, 0))
         ttk.Label(export_calib, text="GY", style="Subtle.TLabel").grid(row=1, column=6, sticky="w", pady=(6, 0))
         ttk.Entry(export_calib, textvariable=self.export_grid_gap_y_var, width=6, style="Search.TEntry").grid(row=1, column=7, sticky="w", padx=(4, 0), pady=(6, 0))
+
+        self.pick_region_button = ttk.Button(
+            export_calib,
+            text=self._t("pick_region_button"),
+            command=self._on_pick_project_list_region,
+            width=12,
+            style="Secondary.TButton",
+        )
+        self.pick_region_button.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         ttk.Label(
             action_card,
@@ -2196,6 +2212,101 @@ class CapCutGui:
         self.mode_var.set("sync")
         self._start_run()
 
+    def _on_pick_project_list_region(self) -> None:
+        """Khoanh vùng list project bằng kéo chuột kiểu screenshot, rồi tự điền L/T/W/H."""
+        try:
+            session = CapCutSessionController(title_hint="CapCut")
+            hwnd = session.find_main_window()
+            if not hwnd:
+                messagebox.showerror("Không thấy CapCut", "Không tìm thấy cửa sổ CapCut đang mở.")
+                return
+
+            session.apply_window_policy(hwnd, WindowPolicy(mode="maximize"))
+            time.sleep(0.2)
+
+            user32 = ctypes.windll.user32
+            r = ctypes.wintypes.RECT()
+            if not user32.GetWindowRect(hwnd, ctypes.byref(r)):
+                messagebox.showerror("Lỗi toạ độ", "Không lấy được toạ độ cửa sổ CapCut.")
+                return
+
+            win_left, win_top, win_right, win_bottom = int(r.left), int(r.top), int(r.right), int(r.bottom)
+            win_w = max(1, win_right - win_left)
+            win_h = max(1, win_bottom - win_top)
+
+            overlay = tk.Toplevel(self.root)
+            overlay.attributes("-fullscreen", True)
+            overlay.attributes("-alpha", 0.25)
+            overlay.attributes("-topmost", True)
+            overlay.configure(bg="black")
+            overlay.title("Drag to select project-list region")
+
+            canvas = tk.Canvas(overlay, cursor="cross", bg="black", highlightthickness=0)
+            canvas.pack(fill="both", expand=True)
+
+            state = {"x0": 0, "y0": 0, "rect": None, "done": False, "result": None}
+
+            def on_press(event):
+                state["x0"], state["y0"] = event.x, event.y
+                if state["rect"] is not None:
+                    canvas.delete(state["rect"])
+                state["rect"] = canvas.create_rectangle(event.x, event.y, event.x, event.y, outline="#22d3ee", width=2)
+
+            def on_drag(event):
+                if state["rect"] is None:
+                    return
+                canvas.coords(state["rect"], state["x0"], state["y0"], event.x, event.y)
+
+            def on_release(event):
+                x1, y1 = state["x0"], state["y0"]
+                x2, y2 = event.x, event.y
+                left, right = sorted((x1, x2))
+                top, bottom = sorted((y1, y2))
+                if right - left < 12 or bottom - top < 12:
+                    return
+                state["result"] = (left, top, right, bottom)
+                state["done"] = True
+                overlay.destroy()
+
+            def on_escape(_event):
+                state["done"] = True
+                overlay.destroy()
+
+            canvas.bind("<ButtonPress-1>", on_press)
+            canvas.bind("<B1-Motion>", on_drag)
+            canvas.bind("<ButtonRelease-1>", on_release)
+            overlay.bind("<Escape>", on_escape)
+
+            overlay.grab_set()
+            overlay.focus_force()
+            self.root.wait_window(overlay)
+
+            if not state["result"]:
+                return
+
+            sel_l, sel_t, sel_r, sel_b = state["result"]
+            # clamp theo cửa sổ CapCut
+            sel_l = max(win_left, min(win_right - 1, sel_l))
+            sel_t = max(win_top, min(win_bottom - 1, sel_t))
+            sel_r = max(win_left + 1, min(win_right, sel_r))
+            sel_b = max(win_top + 1, min(win_bottom, sel_b))
+
+            l_ratio = (sel_l - win_left) / win_w
+            t_ratio = (sel_t - win_top) / win_h
+            w_ratio = (sel_r - sel_l) / win_w
+            h_ratio = (sel_b - sel_t) / win_h
+
+            self.export_list_left_var.set(f"{l_ratio:.4f}")
+            self.export_list_top_var.set(f"{t_ratio:.4f}")
+            self.export_list_width_var.set(f"{w_ratio:.4f}")
+            self.export_list_height_var.set(f"{h_ratio:.4f}")
+            self._append_log(
+                f"[REGION_PICK] list=L{l_ratio:.4f},T{t_ratio:.4f},W{w_ratio:.4f},H{h_ratio:.4f} (px={sel_l},{sel_t},{sel_r},{sel_b})\n"
+            )
+            self._set_status("Đã khoanh vùng danh sách dự án", "success")
+        except Exception as exc:
+            messagebox.showerror("Khoanh vùng lỗi", str(exc))
+
     def _on_test_click_first_project(self) -> None:
         """Interactive debug: click ô project đầu tiên trong grid CapCut để user quan sát trực tiếp."""
         try:
@@ -2644,6 +2755,8 @@ class CapCutGui:
             self.export_publish_button.configure(state=new_state)
         if self.test_click_button is not None:
             self.test_click_button.configure(state=new_state)
+        if self.pick_region_button is not None:
+            self.pick_region_button.configure(state=new_state)
         if self.batch_button is not None:
             self.batch_button.configure(state=new_state)
         if self.apply_transition_button is not None:
