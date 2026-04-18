@@ -82,11 +82,53 @@ BULK_ACTION_WARNING_THRESHOLD = 5
 MASK_BACKGROUND_CATALOG_PATH = BASE_DIR / "mask_background_catalog.json"
 MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 
+I18N_TEXTS = {
+    "vi": {
+        "app_title": "CapCut Sync v1.0.6",
+        "header_title": "Đồng bộ dự án CapCut",
+        "header_subtitle": "Chọn dự án ở bên phải, sau đó chạy thao tác ở các tab chức năng.",
+        "language": "Ngôn ngữ",
+        "tab_create": "Tạo dự án",
+        "tab_sync": "Đồng bộ",
+        "tab_transition": "Chuyển cảnh",
+        "tab_keyframe": "Keyframe",
+        "tab_mask": "Mask",
+        "sync_button": "Đồng bộ",
+        "refresh_button": "Làm mới",
+        "publish_button": "Xuất bản",
+        "projects_group": "Dự án CapCut",
+        "projects_selected": "Đã chọn {selected}/{total} dự án",
+        "status_ready": "Sẵn sàng · Bấm Làm mới, chọn dự án rồi Đồng bộ",
+        "log_group": "Nhật ký chạy",
+        "log_subtitle": "Nhật ký thao tác (đồng bộ / chuyển cảnh / keyframe / lỗi).",
+    },
+    "en": {
+        "app_title": "CapCut Sync v1.0.6",
+        "header_title": "CapCut Project Sync",
+        "header_subtitle": "Select projects on the right, then run actions from feature tabs.",
+        "language": "Language",
+        "tab_create": "Create",
+        "tab_sync": "Sync",
+        "tab_transition": "Transition",
+        "tab_keyframe": "Keyframe",
+        "tab_mask": "Mask",
+        "sync_button": "Sync",
+        "refresh_button": "Refresh",
+        "publish_button": "Publish",
+        "projects_group": "CapCut Projects",
+        "projects_selected": "Selected {selected}/{total} projects",
+        "status_ready": "Ready · Click Refresh, choose projects, then Sync",
+        "log_group": "Run Log",
+        "log_subtitle": "Execution logs (sync / transition / keyframe / errors).",
+    },
+}
+
 
 class CapCutGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("CapCut Sync v1.0.5")
+        self.ui_lang_var = tk.StringVar(master=self.root, value="vi")
+        self.root.title(I18N_TEXTS["vi"]["app_title"])
         self.root.geometry("1180x760")
         self.root.minsize(1024, 680)
         self.root.configure(background=BG)
@@ -208,7 +250,7 @@ class CapCutGui:
         self.batch_video_volume_db_var = tk.StringVar(value="0.0")
         self.batch_audio_volume_db_var = tk.StringVar(value="0.0")
         self.template_info_var = tk.StringVar(value="Template cache: chưa lưu")
-        self.status_var = tk.StringVar(value="Sẵn sàng · Bấm Làm mới, chọn dự án rồi Đồng bộ")
+        self.status_var = tk.StringVar(value=I18N_TEXTS["vi"]["status_ready"])
 
         self.transition_enable_var = tk.BooleanVar(value=False)
         self.transition_effects_var = tk.StringVar(value="")
@@ -239,7 +281,7 @@ class CapCutGui:
         self.mask_library_container: ttk.Frame | None = None
 
         self.project_items: list[tuple[str, str, tk.BooleanVar, ttk.Checkbutton]] = []
-        self.project_stats_var = tk.StringVar(value="Đã chọn 0/0 dự án")
+        self.project_stats_var = tk.StringVar(value=I18N_TEXTS["vi"]["projects_selected"].format(selected=0, total=0))
 
         self.projects_canvas: tk.Canvas | None = None
         self.projects_container: ttk.Frame | None = None
@@ -256,10 +298,20 @@ class CapCutGui:
         self.status_badge: ttk.Label | None = None
         self.status_label: ttk.Label | None = None
 
+        self.header_title_label: ttk.Label | None = None
+        self.header_subtitle_label: ttk.Label | None = None
+        self.language_label: ttk.Label | None = None
+        self.nav_tabs: ttk.Notebook | None = None
+        self.projects_card: ttk.Labelframe | None = None
+        self.log_card: ttk.Labelframe | None = None
+        self.log_subtitle_label: ttk.Label | None = None
+
         self._build_layout()
         self._wire_events()
+        self.ui_lang_var.trace_add("write", lambda *_: self._apply_language())
         self.keyframe_mode_var.trace_add("write", lambda *_: self._on_keyframe_mode_changed())
         self._on_keyframe_mode_changed()
+        self._apply_language()
         self._on_mask_mode_changed()
         self._refresh_template_info_label()
 
@@ -275,6 +327,51 @@ class CapCutGui:
         self._load_mask_library_to_input(show_message=False)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    def _t(self, key: str, **kwargs) -> str:
+        lang = (self.ui_lang_var.get() or "vi").strip().lower()
+        if lang not in I18N_TEXTS:
+            lang = "vi"
+        tmpl = I18N_TEXTS[lang].get(key) or I18N_TEXTS["vi"].get(key) or key
+        if kwargs:
+            try:
+                return tmpl.format(**kwargs)
+            except Exception:
+                return tmpl
+        return tmpl
+
+    def _apply_language(self) -> None:
+        self.root.title(self._t("app_title"))
+
+        if self.header_title_label is not None:
+            self.header_title_label.configure(text=self._t("header_title"))
+        if self.header_subtitle_label is not None:
+            self.header_subtitle_label.configure(text=self._t("header_subtitle"))
+        if self.language_label is not None:
+            self.language_label.configure(text=self._t("language"))
+
+        if self.nav_tabs is not None:
+            self.nav_tabs.tab(0, text=self._t("tab_create"))
+            self.nav_tabs.tab(1, text=self._t("tab_sync"))
+            self.nav_tabs.tab(2, text=self._t("tab_transition"))
+            self.nav_tabs.tab(3, text=self._t("tab_keyframe"))
+            self.nav_tabs.tab(4, text=self._t("tab_mask"))
+
+        if self.sync_button is not None:
+            self.sync_button.configure(text=self._t("sync_button"))
+        if self.refresh_button is not None:
+            self.refresh_button.configure(text=self._t("refresh_button"))
+        if self.export_publish_button is not None:
+            self.export_publish_button.configure(text=self._t("publish_button"))
+
+        if self.projects_card is not None:
+            self.projects_card.configure(text=self._t("projects_group"))
+        if self.log_card is not None:
+            self.log_card.configure(text=self._t("log_group"))
+        if self.log_subtitle_label is not None:
+            self.log_subtitle_label.configure(text=self._t("log_subtitle"))
+
+        self._update_project_stats()
+
     def _build_layout(self) -> None:
         main_frame = ttk.Frame(self.root, padding=18, style="Header.TFrame")
         main_frame.grid(row=0, column=0, sticky=NSEW)
@@ -286,14 +383,28 @@ class CapCutGui:
         header.grid(row=0, column=0, columnspan=2, sticky=EW)
         header.columnconfigure(0, weight=1)
 
-        ttk.Label(header, text="Đồng bộ dự án CapCut", style="AppTitle.TLabel").grid(
-            row=0, column=0, sticky="w"
-        )
-        ttk.Label(
+        self.header_title_label = ttk.Label(header, text=self._t("header_title"), style="AppTitle.TLabel")
+        self.header_title_label.grid(row=0, column=0, sticky="w")
+
+        self.header_subtitle_label = ttk.Label(
             header,
-            text="Chọn dự án ở bên phải, sau đó chạy thao tác ở các tab chức năng.",
+            text=self._t("header_subtitle"),
             style="Subtle.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        )
+        self.header_subtitle_label.grid(row=1, column=0, sticky="w", pady=(4, 0))
+
+        lang_row = ttk.Frame(header, style="Header.TFrame")
+        lang_row.grid(row=0, column=1, rowspan=2, sticky="e")
+        self.language_label = ttk.Label(lang_row, text=self._t("language"), style="Subtle.TLabel")
+        self.language_label.grid(row=0, column=0, sticky="e", padx=(0, 6))
+        lang_combo = ttk.Combobox(
+            lang_row,
+            values=["vi", "en"],
+            textvariable=self.ui_lang_var,
+            state="readonly",
+            width=6,
+        )
+        lang_combo.grid(row=0, column=1, sticky="e")
 
         left_panel = ttk.Frame(main_frame, style="Panel.TFrame")
         left_panel.grid(row=1, column=0, sticky=NSEW, padx=(0, 14))
@@ -308,6 +419,7 @@ class CapCutGui:
 
         nav_tabs = ttk.Notebook(left_panel)
         nav_tabs.grid(row=1, column=0, sticky=NSEW)
+        self.nav_tabs = nav_tabs
 
         sync_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
         create_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
@@ -323,11 +435,11 @@ class CapCutGui:
         mask_tab.columnconfigure(0, weight=1)
         mask_tab.rowconfigure(0, weight=1)
 
-        nav_tabs.add(create_tab, text="Tạo dự án")
-        nav_tabs.add(sync_tab, text="Đồng bộ")
-        nav_tabs.add(transition_tab, text="Chuyển cảnh")
-        nav_tabs.add(keyframe_tab, text="Keyframe")
-        nav_tabs.add(mask_tab, text="Mask")
+        nav_tabs.add(create_tab, text=self._t("tab_create"))
+        nav_tabs.add(sync_tab, text=self._t("tab_sync"))
+        nav_tabs.add(transition_tab, text=self._t("tab_transition"))
+        nav_tabs.add(keyframe_tab, text=self._t("tab_keyframe"))
+        nav_tabs.add(mask_tab, text=self._t("tab_mask"))
 
         action_card = ttk.Labelframe(
             sync_tab,
@@ -349,7 +461,7 @@ class CapCutGui:
 
         self.sync_button = ttk.Button(
             action_card,
-            text="Đồng bộ",
+            text=self._t("sync_button"),
             command=self._on_sync_audio,
             width=12,
             style="Accent.TButton",
@@ -631,10 +743,11 @@ class CapCutGui:
 
         projects_card = ttk.Labelframe(
             right_panel,
-            text="Dự án CapCut",
+            text=self._t("projects_group"),
             padding=12,
             style="ProjectCard.TLabelframe",
         )
+        self.projects_card = projects_card
         projects_card.grid(row=0, column=0, sticky=NSEW)
         projects_card.columnconfigure(0, weight=1)
         projects_card.rowconfigure(1, weight=1)
@@ -651,7 +764,7 @@ class CapCutGui:
 
         self.refresh_button = ttk.Button(
             projects_header,
-            text="Làm mới",
+            text=self._t("refresh_button"),
             command=self.refresh_projects,
             width=12,
             style="Secondary.TButton",
@@ -660,7 +773,7 @@ class CapCutGui:
 
         self.export_publish_button = ttk.Button(
             projects_header,
-            text="Xuất bản",
+            text=self._t("publish_button"),
             command=self._on_export_selected_projects,
             width=12,
             style="Accent.TButton",
@@ -716,20 +829,22 @@ class CapCutGui:
 
         log_card = ttk.Labelframe(
             main_frame,
-            text="Nhật ký chạy",
+            text=self._t("log_group"),
             padding=12,
             style="ProjectCard.TLabelframe",
         )
+        self.log_card = log_card
         log_card.grid(row=3, column=0, columnspan=2, sticky=NSEW, pady=(10, 0))
         log_card.columnconfigure(0, weight=1)
         log_card.rowconfigure(1, weight=1)
         main_frame.rowconfigure(3, weight=0)
 
-        ttk.Label(
+        self.log_subtitle_label = ttk.Label(
             log_card,
-            text="Nhật ký thao tác (đồng bộ / chuyển cảnh / keyframe / lỗi).",
+            text=self._t("log_subtitle"),
             style="Subtle.TLabel",
-        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+        )
+        self.log_subtitle_label.grid(row=0, column=0, sticky="w", pady=(0, 8))
 
         self.log_text = ScrolledText(
             log_card,
@@ -781,7 +896,7 @@ class CapCutGui:
     def _update_project_stats(self) -> None:
         total = len(self.project_items)
         selected = sum(1 for _, _, var, _ in self.project_items if var.get())
-        self.project_stats_var.set(f"Đã chọn {selected}/{total} dự án")
+        self.project_stats_var.set(self._t("projects_selected", selected=selected, total=total))
 
     def _collect_selected_projects(self) -> list[str]:
         out: list[str] = []
@@ -2216,7 +2331,7 @@ class CapCutGui:
         self.project_items = []
 
         if not DEFAULT_CAPCUT_PROJECT_ROOT.exists():
-            self.project_stats_var.set("Đã chọn 0/0 dự án")
+            self.project_stats_var.set(self._t("projects_selected", selected=0, total=0))
             self._append_log(
                 f'Không tìm thấy thư mục dự án mặc định "{DEFAULT_CAPCUT_PROJECT_ROOT}".\n'
             )
@@ -2252,7 +2367,7 @@ class CapCutGui:
             self._append_log(f"Đã bỏ qua {skipped} thư mục không phải project.\n")
 
         if not filtered:
-            self.project_stats_var.set("Đã chọn 0/0 dự án")
+            self.project_stats_var.set(self._t("projects_selected", selected=0, total=0))
             self._append_log(f"Không tìm thấy dự án CapCut trong {DEFAULT_CAPCUT_PROJECT_ROOT}.\n")
             self._set_status("Không có dự án", "warning")
             return
