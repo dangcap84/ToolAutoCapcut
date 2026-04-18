@@ -49,6 +49,7 @@ from export_automation import (
     ProjectNavigator,
     PyAutoGUIBackend,
     WindowPolicy,
+    WindowRect,
     default_capcut_exe_candidates,
 )
 
@@ -84,7 +85,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 
 I18N_TEXTS = {
     "vi": {
-        "app_title": "CapCut Sync v1.0.7",
+        "app_title": "CapCut Sync v1.0.8",
         "header_title": "Đồng bộ dự án CapCut",
         "header_subtitle": "Chọn dự án ở bên phải, sau đó chạy thao tác ở các tab chức năng.",
         "language": "Ngôn ngữ",
@@ -96,6 +97,7 @@ I18N_TEXTS = {
         "sync_button": "Đồng bộ",
         "refresh_button": "Làm mới",
         "publish_button": "Xuất bản",
+        "test_click_button": "Test click #1",
         "projects_group": "Dự án CapCut",
         "projects_selected": "Đã chọn {selected}/{total} dự án",
         "status_ready": "Sẵn sàng · Bấm Làm mới, chọn dự án rồi Đồng bộ",
@@ -103,7 +105,7 @@ I18N_TEXTS = {
         "log_subtitle": "Nhật ký thao tác (đồng bộ / chuyển cảnh / keyframe / lỗi).",
     },
     "en": {
-        "app_title": "CapCut Sync v1.0.7",
+        "app_title": "CapCut Sync v1.0.8",
         "header_title": "CapCut Project Sync",
         "header_subtitle": "Select projects on the right, then run actions from feature tabs.",
         "language": "Language",
@@ -115,6 +117,7 @@ I18N_TEXTS = {
         "sync_button": "Sync",
         "refresh_button": "Refresh",
         "publish_button": "Publish",
+        "test_click_button": "Test click #1",
         "projects_group": "CapCut Projects",
         "projects_selected": "Selected {selected}/{total} projects",
         "status_ready": "Ready · Click Refresh, choose projects, then Sync",
@@ -289,6 +292,7 @@ class CapCutGui:
         self.projects_scroll: tk.Scrollbar | None = None
         self.refresh_button: ttk.Button | None = None
         self.export_publish_button: ttk.Button | None = None
+        self.test_click_button: ttk.Button | None = None
         self.sync_button: ttk.Button | None = None
         self.batch_button: ttk.Button | None = None
         self.apply_transition_button: ttk.Button | None = None
@@ -362,6 +366,8 @@ class CapCutGui:
             self.refresh_button.configure(text=self._t("refresh_button"))
         if self.export_publish_button is not None:
             self.export_publish_button.configure(text=self._t("publish_button"))
+        if self.test_click_button is not None:
+            self.test_click_button.configure(text=self._t("test_click_button"))
 
         if self.projects_card is not None:
             self.projects_card.configure(text=self._t("projects_group"))
@@ -779,6 +785,15 @@ class CapCutGui:
             style="Accent.TButton",
         )
         self.export_publish_button.grid(row=0, column=2, sticky="e", padx=(8, 0))
+
+        self.test_click_button = ttk.Button(
+            projects_header,
+            text=self._t("test_click_button"),
+            command=self._on_test_click_first_project,
+            width=13,
+            style="Secondary.TButton",
+        )
+        self.test_click_button.grid(row=0, column=3, sticky="e", padx=(8, 0))
 
         list_host = ttk.Frame(projects_card, style="Panel.TFrame")
         list_host.grid(row=1, column=0, sticky=NSEW)
@@ -2135,6 +2150,34 @@ class CapCutGui:
         self.mode_var.set("sync")
         self._start_run()
 
+    def _on_test_click_first_project(self) -> None:
+        """Interactive debug: click ô project đầu tiên trong grid CapCut để user quan sát trực tiếp."""
+        try:
+            backend = PyAutoGUIBackend(pause_seconds=0.04)
+            session = CapCutSessionController(title_hint="CapCut")
+            hwnd = session.find_main_window()
+            if not hwnd:
+                messagebox.showerror("Không thấy CapCut", "Không tìm thấy cửa sổ CapCut đang mở.")
+                return
+
+            session.apply_window_policy(hwnd, WindowPolicy(mode="maximize"))
+            time.sleep(0.2)
+
+            rect_obj = ctypes.wintypes.RECT()
+            user32 = ctypes.windll.user32
+            if not user32.GetWindowRect(hwnd, ctypes.byref(rect_obj)):
+                messagebox.showerror("Lỗi toạ độ", "Không lấy được toạ độ cửa sổ CapCut.")
+                return
+            rect = WindowRect(rect_obj.left, rect_obj.top, rect_obj.right, rect_obj.bottom)
+            x = int(rect.left + rect.width * 0.20)
+            y = int(rect.top + rect.height * 0.24)
+
+            backend.click_abs(x, y, clicks=2)
+            self._append_log(f"[TEST_CLICK] first_project_grid_click_at={x},{y} rect={rect.left},{rect.top},{rect.right},{rect.bottom}\n")
+            self._set_status(f"Đã test click tại ({x},{y})", "info")
+        except Exception as exc:
+            messagebox.showerror("Test click lỗi", str(exc))
+
     def _on_export_selected_projects(self) -> None:
         if self.current_process is not None or self.current_task_running:
             messagebox.showwarning("Đang bận", "Đang có tiến trình chạy. Vui lòng chờ xong.")
@@ -2545,6 +2588,8 @@ class CapCutGui:
             self.refresh_button.configure(state=new_state)
         if self.export_publish_button is not None:
             self.export_publish_button.configure(state=new_state)
+        if self.test_click_button is not None:
+            self.test_click_button.configure(state=new_state)
         if self.batch_button is not None:
             self.batch_button.configure(state=new_state)
         if self.apply_transition_button is not None:
