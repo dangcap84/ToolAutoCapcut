@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Protocol
 
 import difflib
+import unicodedata
 
 _CREATE_NO_WINDOW = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
@@ -288,7 +289,7 @@ class ProjectNavigationConfig:
     card_y_gap_ratio: float = 0.21
     max_scroll_pages: int = 8
     scroll_step: int = -650
-    name_match_threshold: float = 0.62
+    name_match_threshold: float = 0.58
 
 
 @dataclass
@@ -309,7 +310,18 @@ class ProjectNavigator:
 
     @staticmethod
     def _norm_text(s: str) -> str:
-        return "".join(ch.lower() for ch in (s or "").strip() if ch.isalnum())
+        raw = (s or "").strip().casefold()
+        if not raw:
+            return ""
+
+        # Tối ưu song ngữ Anh-Việt:
+        # - bỏ dấu tiếng Việt (áàảãạ -> a, ăâ -> a, ê -> e, ơ -> o, ư -> u, ...)
+        # - map đ -> d
+        # - bỏ ký tự phân tách để so khớp ổn định hơn.
+        raw = raw.replace("đ", "d")
+        decomp = unicodedata.normalize("NFKD", raw)
+        no_marks = "".join(ch for ch in decomp if not unicodedata.combining(ch))
+        return "".join(ch for ch in no_marks if ch.isalnum())
 
     def _name_score(self, a: str, b: str) -> float:
         na = self._norm_text(a)
@@ -318,9 +330,19 @@ class ProjectNavigator:
             return 0.0
         if na == nb:
             return 1.0
+
+        # Ưu tiên match chứa nhau để xử lý tên có prefix/suffix theo locale
+        # ví dụ: "du an test1" vs "test1 project".
         if na in nb or nb in na:
-            return 0.9
-        return float(difflib.SequenceMatcher(None, na, nb).ratio())
+            return 0.92
+
+        # token overlap cho các trường hợp tiếng Anh + tiếng Việt trộn lẫn.
+        ta = set(filter(None, [na[i : i + 3] for i in range(max(1, len(na) - 2))]))
+        tb = set(filter(None, [nb[i : i + 3] for i in range(max(1, len(nb) - 2))]))
+        overlap = (len(ta & tb) / len(ta | tb)) if (ta and tb) else 0.0
+
+        seq = float(difflib.SequenceMatcher(None, na, nb).ratio())
+        return max(seq, overlap)
 
     def _iter_project_card_points(self, rect: WindowRect) -> list[tuple[int, int]]:
         pts: list[tuple[int, int]] = []
