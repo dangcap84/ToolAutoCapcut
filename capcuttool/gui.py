@@ -87,12 +87,13 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 
 I18N_TEXTS = {
     "vi": {
-        "app_title": "CapCut Sync v1.0.9",
+        "app_title": "CapCut Sync v1.0.10",
         "header_title": "Đồng bộ dự án CapCut",
         "header_subtitle": "Chọn dự án ở bên phải, sau đó chạy thao tác ở các tab chức năng.",
         "language": "Ngôn ngữ",
         "tab_create": "Tạo dự án",
         "tab_sync": "Đồng bộ",
+        "tab_export": "Xuất bản",
         "tab_transition": "Chuyển cảnh",
         "tab_keyframe": "Keyframe",
         "tab_mask": "Mask",
@@ -108,12 +109,13 @@ I18N_TEXTS = {
         "log_subtitle": "Nhật ký thao tác (đồng bộ / chuyển cảnh / keyframe / lỗi).",
     },
     "en": {
-        "app_title": "CapCut Sync v1.0.9",
+        "app_title": "CapCut Sync v1.0.10",
         "header_title": "CapCut Project Sync",
         "header_subtitle": "Select projects on the right, then run actions from feature tabs.",
         "language": "Language",
         "tab_create": "Create",
         "tab_sync": "Sync",
+        "tab_export": "Publish",
         "tab_transition": "Transition",
         "tab_keyframe": "Keyframe",
         "tab_mask": "Mask",
@@ -371,9 +373,10 @@ class CapCutGui:
         if self.nav_tabs is not None:
             self.nav_tabs.tab(0, text=self._t("tab_create"))
             self.nav_tabs.tab(1, text=self._t("tab_sync"))
-            self.nav_tabs.tab(2, text=self._t("tab_transition"))
-            self.nav_tabs.tab(3, text=self._t("tab_keyframe"))
-            self.nav_tabs.tab(4, text=self._t("tab_mask"))
+            self.nav_tabs.tab(2, text=self._t("tab_export"))
+            self.nav_tabs.tab(3, text=self._t("tab_transition"))
+            self.nav_tabs.tab(4, text=self._t("tab_keyframe"))
+            self.nav_tabs.tab(5, text=self._t("tab_mask"))
 
         if self.sync_button is not None:
             self.sync_button.configure(text=self._t("sync_button"))
@@ -445,11 +448,13 @@ class CapCutGui:
         self.nav_tabs = nav_tabs
 
         sync_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
+        export_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
         create_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
         transition_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
         keyframe_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
         mask_tab = ttk.Frame(nav_tabs, style="Panel.TFrame", padding=10)
         sync_tab.columnconfigure(0, weight=1)
+        export_tab.columnconfigure(0, weight=1)
         create_tab.columnconfigure(0, weight=1)
         transition_tab.columnconfigure(0, weight=1)
         transition_tab.rowconfigure(0, weight=1)
@@ -460,6 +465,7 @@ class CapCutGui:
 
         nav_tabs.add(create_tab, text=self._t("tab_create"))
         nav_tabs.add(sync_tab, text=self._t("tab_sync"))
+        nav_tabs.add(export_tab, text=self._t("tab_export"))
         nav_tabs.add(transition_tab, text=self._t("tab_transition"))
         nav_tabs.add(keyframe_tab, text=self._t("tab_keyframe"))
         nav_tabs.add(mask_tab, text=self._t("tab_mask"))
@@ -491,13 +497,46 @@ class CapCutGui:
         )
         self.sync_button.grid(row=2, column=0, sticky="w")
 
-        export_calib = ttk.Labelframe(
+        ttk.Label(
             action_card,
+            text=f"Thư mục dự án CapCut: {DEFAULT_CAPCUT_PROJECT_ROOT}",
+            style="Subtle.TLabel",
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+        export_card = ttk.Labelframe(
+            export_tab,
+            text="Xuất bản dự án",
+            padding=14,
+            style="ProjectCard.TLabelframe",
+        )
+        export_card.grid(row=0, column=0, sticky=EW)
+        export_card.columnconfigure(3, weight=1)
+
+        self.export_publish_button = ttk.Button(
+            export_card,
+            text=self._t("publish_button"),
+            command=self._on_export_selected_projects,
+            width=12,
+            style="Accent.TButton",
+        )
+        self.export_publish_button.grid(row=0, column=0, sticky="w")
+
+        self.test_click_button = ttk.Button(
+            export_card,
+            text=self._t("test_click_button"),
+            command=self._on_test_click_first_project,
+            width=13,
+            style="Secondary.TButton",
+        )
+        self.test_click_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
+
+        export_calib = ttk.Labelframe(
+            export_card,
             text="Calib vùng danh sách dự án (Export)",
             padding=8,
             style="ProjectCard.TLabelframe",
         )
-        export_calib.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        export_calib.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(10, 0))
         for i in range(8):
             export_calib.columnconfigure(i, weight=0)
 
@@ -528,11 +567,6 @@ class CapCutGui:
         )
         self.pick_region_button.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
-        ttk.Label(
-            action_card,
-            text=f"Thư mục dự án CapCut: {DEFAULT_CAPCUT_PROJECT_ROOT}",
-            style="Subtle.TLabel",
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         batch_card = ttk.Labelframe(
             create_tab,
@@ -831,23 +865,6 @@ class CapCutGui:
         )
         self.refresh_button.grid(row=0, column=1, sticky="e")
 
-        self.export_publish_button = ttk.Button(
-            projects_header,
-            text=self._t("publish_button"),
-            command=self._on_export_selected_projects,
-            width=12,
-            style="Accent.TButton",
-        )
-        self.export_publish_button.grid(row=0, column=2, sticky="e", padx=(8, 0))
-
-        self.test_click_button = ttk.Button(
-            projects_header,
-            text=self._t("test_click_button"),
-            command=self._on_test_click_first_project,
-            width=13,
-            style="Secondary.TButton",
-        )
-        self.test_click_button.grid(row=0, column=3, sticky="e", padx=(8, 0))
 
         list_host = ttk.Frame(projects_card, style="Panel.TFrame")
         list_host.grid(row=1, column=0, sticky=NSEW)
@@ -2235,16 +2252,20 @@ class CapCutGui:
             win_h = max(1, win_bottom - win_top)
 
             overlay = tk.Toplevel(self.root)
-            overlay.attributes("-fullscreen", True)
-            overlay.attributes("-alpha", 0.25)
+            overlay.overrideredirect(True)
+            overlay.geometry(f"{win_w}x{win_h}+{win_left}+{win_top}")
+            overlay.attributes("-alpha", 0.20)
             overlay.attributes("-topmost", True)
-            overlay.configure(bg="black")
+            overlay.configure(bg="#111111")
             overlay.title("Drag to select project-list region")
 
-            canvas = tk.Canvas(overlay, cursor="cross", bg="black", highlightthickness=0)
+            canvas = tk.Canvas(overlay, cursor="cross", bg="#111111", highlightthickness=0)
             canvas.pack(fill="both", expand=True)
 
-            state = {"x0": 0, "y0": 0, "rect": None, "done": False, "result": None}
+            state = {"x0": 0, "y0": 0, "rect": None, "result": None}
+
+            # viền vùng CapCut để user nhìn rõ phạm vi kéo
+            canvas.create_rectangle(1, 1, win_w - 2, win_h - 2, outline="#38bdf8", width=2)
 
             def on_press(event):
                 state["x0"], state["y0"] = event.x, event.y
@@ -2260,16 +2281,19 @@ class CapCutGui:
             def on_release(event):
                 x1, y1 = state["x0"], state["y0"]
                 x2, y2 = event.x, event.y
-                left, right = sorted((x1, x2))
-                top, bottom = sorted((y1, y2))
-                if right - left < 12 or bottom - top < 12:
+                left_local, right_local = sorted((x1, x2))
+                top_local, bottom_local = sorted((y1, y2))
+                if right_local - left_local < 12 or bottom_local - top_local < 12:
                     return
-                state["result"] = (left, top, right, bottom)
-                state["done"] = True
+                state["result"] = (
+                    win_left + left_local,
+                    win_top + top_local,
+                    win_left + right_local,
+                    win_top + bottom_local,
+                )
                 overlay.destroy()
 
             def on_escape(_event):
-                state["done"] = True
                 overlay.destroy()
 
             canvas.bind("<ButtonPress-1>", on_press)
@@ -2277,11 +2301,11 @@ class CapCutGui:
             canvas.bind("<ButtonRelease-1>", on_release)
             overlay.bind("<Escape>", on_escape)
 
-            overlay.grab_set()
             overlay.focus_force()
             self.root.wait_window(overlay)
 
             if not state["result"]:
+                self._set_status("Đã huỷ khoanh vùng", "info")
                 return
 
             sel_l, sel_t, sel_r, sel_b = state["result"]
