@@ -87,7 +87,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 
 I18N_TEXTS = {
     "vi": {
-        "app_title": "CapCut Sync v1.0.10",
+        "app_title": "CapCut Sync v1.0.11",
         "header_title": "Đồng bộ dự án CapCut",
         "header_subtitle": "Chọn dự án ở bên phải, sau đó chạy thao tác ở các tab chức năng.",
         "language": "Ngôn ngữ",
@@ -109,7 +109,7 @@ I18N_TEXTS = {
         "log_subtitle": "Nhật ký thao tác (đồng bộ / chuyển cảnh / keyframe / lỗi).",
     },
     "en": {
-        "app_title": "CapCut Sync v1.0.10",
+        "app_title": "CapCut Sync v1.0.11",
         "header_title": "CapCut Project Sync",
         "header_subtitle": "Select projects on the right, then run actions from feature tabs.",
         "language": "Language",
@@ -2251,64 +2251,49 @@ class CapCutGui:
             win_w = max(1, win_right - win_left)
             win_h = max(1, win_bottom - win_top)
 
-            overlay = tk.Toplevel(self.root)
-            overlay.overrideredirect(True)
-            overlay.geometry(f"{win_w}x{win_h}+{win_left}+{win_top}")
-            overlay.attributes("-alpha", 0.20)
-            overlay.attributes("-topmost", True)
-            overlay.configure(bg="#111111")
-            overlay.title("Drag to select project-list region")
+            messagebox.showinfo(
+                "Khoanh vùng",
+                "Sau khi bấm OK: qua cửa sổ CapCut, NHẤN GIỮ chuột trái và KÉO vùng danh sách dự án, rồi THẢ chuột.\n\nTimeout: 12 giây.",
+            )
 
-            canvas = tk.Canvas(overlay, cursor="cross", bg="#111111", highlightthickness=0)
-            canvas.pack(fill="both", expand=True)
+            user32 = ctypes.windll.user32
+            VK_LBUTTON = 0x01
 
-            state = {"x0": 0, "y0": 0, "rect": None, "result": None}
+            class POINT(ctypes.Structure):
+                _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
 
-            # viền vùng CapCut để user nhìn rõ phạm vi kéo
-            canvas.create_rectangle(1, 1, win_w - 2, win_h - 2, outline="#38bdf8", width=2)
+            def get_cursor_pos() -> tuple[int, int]:
+                p = POINT()
+                user32.GetCursorPos(ctypes.byref(p))
+                return int(p.x), int(p.y)
 
-            def on_press(event):
-                state["x0"], state["y0"] = event.x, event.y
-                if state["rect"] is not None:
-                    canvas.delete(state["rect"])
-                state["rect"] = canvas.create_rectangle(event.x, event.y, event.x, event.y, outline="#22d3ee", width=2)
+            start = None
+            end = None
+            pressed = False
+            deadline = time.time() + 12.0
 
-            def on_drag(event):
-                if state["rect"] is None:
-                    return
-                canvas.coords(state["rect"], state["x0"], state["y0"], event.x, event.y)
+            while time.time() < deadline:
+                down = bool(user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000)
+                if down and not pressed:
+                    start = get_cursor_pos()
+                    pressed = True
+                elif down and pressed:
+                    end = get_cursor_pos()
+                elif (not down) and pressed:
+                    if end is None:
+                        end = get_cursor_pos()
+                    break
+                time.sleep(0.01)
 
-            def on_release(event):
-                x1, y1 = state["x0"], state["y0"]
-                x2, y2 = event.x, event.y
-                left_local, right_local = sorted((x1, x2))
-                top_local, bottom_local = sorted((y1, y2))
-                if right_local - left_local < 12 or bottom_local - top_local < 12:
-                    return
-                state["result"] = (
-                    win_left + left_local,
-                    win_top + top_local,
-                    win_left + right_local,
-                    win_top + bottom_local,
-                )
-                overlay.destroy()
-
-            def on_escape(_event):
-                overlay.destroy()
-
-            canvas.bind("<ButtonPress-1>", on_press)
-            canvas.bind("<B1-Motion>", on_drag)
-            canvas.bind("<ButtonRelease-1>", on_release)
-            overlay.bind("<Escape>", on_escape)
-
-            overlay.focus_force()
-            self.root.wait_window(overlay)
-
-            if not state["result"]:
-                self._set_status("Đã huỷ khoanh vùng", "info")
+            if not start or not end:
+                self._set_status("Khoanh vùng timeout hoặc chưa kéo chuột", "error")
                 return
 
-            sel_l, sel_t, sel_r, sel_b = state["result"]
+            sel_l, sel_r = sorted((start[0], end[0]))
+            sel_t, sel_b = sorted((start[1], end[1]))
+            if (sel_r - sel_l) < 12 or (sel_b - sel_t) < 12:
+                self._set_status("Vùng khoanh quá nhỏ", "error")
+                return
             # clamp theo cửa sổ CapCut
             sel_l = max(win_left, min(win_right - 1, sel_l))
             sel_t = max(win_top, min(win_bottom - 1, sel_t))
