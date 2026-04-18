@@ -283,6 +283,16 @@ class CapCutGui:
         self.mask_check_all_var = tk.BooleanVar(value=False)
         self.mask_library_container: ttk.Frame | None = None
 
+        # Export list/grid calibration (tỉ lệ theo cửa sổ CapCut: 0..1)
+        self.export_list_left_var = tk.StringVar(value="0.08")
+        self.export_list_top_var = tk.StringVar(value="0.16")
+        self.export_list_width_var = tk.StringVar(value="0.84")
+        self.export_list_height_var = tk.StringVar(value="0.76")
+        self.export_grid_first_x_var = tk.StringVar(value="0.14")
+        self.export_grid_first_y_var = tk.StringVar(value="0.16")
+        self.export_grid_gap_x_var = tk.StringVar(value="0.29")
+        self.export_grid_gap_y_var = tk.StringVar(value="0.23")
+
         self.project_items: list[tuple[str, str, tk.BooleanVar, ttk.Checkbutton]] = []
         self.project_stats_var = tk.StringVar(value=I18N_TEXTS["vi"]["projects_selected"].format(selected=0, total=0))
 
@@ -474,11 +484,39 @@ class CapCutGui:
         )
         self.sync_button.grid(row=2, column=0, sticky="w")
 
+        export_calib = ttk.Labelframe(
+            action_card,
+            text="Calib vùng danh sách dự án (Export)",
+            padding=8,
+            style="ProjectCard.TLabelframe",
+        )
+        export_calib.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        for i in range(8):
+            export_calib.columnconfigure(i, weight=0)
+
+        ttk.Label(export_calib, text="L", style="Subtle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Entry(export_calib, textvariable=self.export_list_left_var, width=6, style="Search.TEntry").grid(row=0, column=1, sticky="w", padx=(4, 8))
+        ttk.Label(export_calib, text="T", style="Subtle.TLabel").grid(row=0, column=2, sticky="w")
+        ttk.Entry(export_calib, textvariable=self.export_list_top_var, width=6, style="Search.TEntry").grid(row=0, column=3, sticky="w", padx=(4, 8))
+        ttk.Label(export_calib, text="W", style="Subtle.TLabel").grid(row=0, column=4, sticky="w")
+        ttk.Entry(export_calib, textvariable=self.export_list_width_var, width=6, style="Search.TEntry").grid(row=0, column=5, sticky="w", padx=(4, 8))
+        ttk.Label(export_calib, text="H", style="Subtle.TLabel").grid(row=0, column=6, sticky="w")
+        ttk.Entry(export_calib, textvariable=self.export_list_height_var, width=6, style="Search.TEntry").grid(row=0, column=7, sticky="w", padx=(4, 0))
+
+        ttk.Label(export_calib, text="FX", style="Subtle.TLabel").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(export_calib, textvariable=self.export_grid_first_x_var, width=6, style="Search.TEntry").grid(row=1, column=1, sticky="w", padx=(4, 8), pady=(6, 0))
+        ttk.Label(export_calib, text="FY", style="Subtle.TLabel").grid(row=1, column=2, sticky="w", pady=(6, 0))
+        ttk.Entry(export_calib, textvariable=self.export_grid_first_y_var, width=6, style="Search.TEntry").grid(row=1, column=3, sticky="w", padx=(4, 8), pady=(6, 0))
+        ttk.Label(export_calib, text="GX", style="Subtle.TLabel").grid(row=1, column=4, sticky="w", pady=(6, 0))
+        ttk.Entry(export_calib, textvariable=self.export_grid_gap_x_var, width=6, style="Search.TEntry").grid(row=1, column=5, sticky="w", padx=(4, 8), pady=(6, 0))
+        ttk.Label(export_calib, text="GY", style="Subtle.TLabel").grid(row=1, column=6, sticky="w", pady=(6, 0))
+        ttk.Entry(export_calib, textvariable=self.export_grid_gap_y_var, width=6, style="Search.TEntry").grid(row=1, column=7, sticky="w", padx=(4, 0), pady=(6, 0))
+
         ttk.Label(
             action_card,
             text=f"Thư mục dự án CapCut: {DEFAULT_CAPCUT_PROJECT_ROOT}",
             style="Subtle.TLabel",
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         batch_card = ttk.Labelframe(
             create_tab,
@@ -919,6 +957,14 @@ class CapCutGui:
             if var.get():
                 out.append(path)
         return sorted(out)
+
+    @staticmethod
+    def _safe_ratio(var: tk.StringVar, default: float) -> float:
+        try:
+            v = float((var.get() or "").strip())
+        except Exception:
+            return default
+        return max(0.0, min(1.0, v))
 
     def _confirm_bulk_action(self, action_name: str, projects: list[str]) -> bool:
         count = len(projects)
@@ -2219,9 +2265,17 @@ class CapCutGui:
                         result_click_y_ratio=0.30,
                         esc_reset_count=3,
                         after_open_wait_seconds=2.5,
-                        after_search_wait_seconds=1.3,
+                        after_search_wait_seconds=0.0,
                         retries=3,
                         result_open_clicks=3,
+                        list_left_ratio=self._safe_ratio(self.export_list_left_var, 0.08),
+                        list_top_ratio=self._safe_ratio(self.export_list_top_var, 0.16),
+                        list_width_ratio=self._safe_ratio(self.export_list_width_var, 0.84),
+                        list_height_ratio=self._safe_ratio(self.export_list_height_var, 0.76),
+                        first_card_x_ratio=self._safe_ratio(self.export_grid_first_x_var, 0.14),
+                        first_card_y_ratio=self._safe_ratio(self.export_grid_first_y_var, 0.16),
+                        card_x_gap_ratio=self._safe_ratio(self.export_grid_gap_x_var, 0.29),
+                        card_y_gap_ratio=self._safe_ratio(self.export_grid_gap_y_var, 0.23),
                     ),
                 )
                 exporter = ExportActionRunner(

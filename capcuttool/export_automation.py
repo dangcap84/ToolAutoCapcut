@@ -283,10 +283,16 @@ class ProjectNavigationConfig:
     allow_title_change_fallback: bool = True
     row_count: int = 4
     col_count: int = 3
-    first_card_x_ratio: float = 0.20
-    first_card_y_ratio: float = 0.24
-    card_x_gap_ratio: float = 0.26
-    card_y_gap_ratio: float = 0.21
+    # vùng danh sách project trong cửa sổ CapCut (0..1, theo window)
+    list_left_ratio: float = 0.08
+    list_top_ratio: float = 0.16
+    list_width_ratio: float = 0.84
+    list_height_ratio: float = 0.76
+    # lưới card bên trong vùng danh sách (0..1, theo list rect)
+    first_card_x_ratio: float = 0.14
+    first_card_y_ratio: float = 0.16
+    card_x_gap_ratio: float = 0.29
+    card_y_gap_ratio: float = 0.23
     max_scroll_pages: int = 8
     scroll_step: int = -650
     name_match_threshold: float = 0.58
@@ -346,6 +352,13 @@ class ProjectNavigator:
         seq = float(difflib.SequenceMatcher(None, na, nb).ratio())
         return max(seq, overlap)
 
+    def _project_list_rect(self, win_rect: WindowRect) -> WindowRect:
+        l = int(win_rect.left + win_rect.width * self.cfg.list_left_ratio)
+        t = int(win_rect.top + win_rect.height * self.cfg.list_top_ratio)
+        w = int(max(40, win_rect.width * self.cfg.list_width_ratio))
+        h = int(max(40, win_rect.height * self.cfg.list_height_ratio))
+        return WindowRect(l, t, l + w, t + h)
+
     def _iter_project_card_points(self, rect: WindowRect) -> list[tuple[int, int]]:
         pts: list[tuple[int, int]] = []
         for r in range(max(1, self.cfg.row_count)):
@@ -389,9 +402,11 @@ class ProjectNavigator:
         target = project_name
         best_score = 0.0
 
-        # Chỉ 1 click anchor vào grid CapCut rồi scan bằng bàn phím,
+        list_rect = self._project_list_rect(rect)
+
+        # Chỉ 1 click anchor vào vùng grid CapCut rồi scan bằng bàn phím,
         # tránh click loạn gây chiếm chuột.
-        ax, ay = self._grid_anchor_point(rect)
+        ax, ay = self._grid_anchor_point(list_rect)
         self.backend.click_abs(ax, ay, clicks=1)
         time.sleep(0.12)
         steps.append(f"scan:anchor_click@{ax},{ay}")
