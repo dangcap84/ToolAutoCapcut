@@ -1008,10 +1008,11 @@ class BatchProjectResult:
 class BatchExportConfig:
     project_names: list[str]
     window_policy: WindowPolicy = field(default_factory=WindowPolicy)
-    relaunch_each_project: bool = True
+    relaunch_each_project: bool = False
     launch_timeout_seconds: float = 25.0
     close_wait_seconds: float = 3.0
     screenshot_on_fail_dir: str | None = None
+    force_relaunch: bool = False
 
 
 class BatchExportRunner:
@@ -1054,7 +1055,17 @@ class BatchExportRunner:
             return None
 
     def _launch_and_prepare(self, cfg: BatchExportConfig) -> CapCutLaunchResult:
-        self.session.close_existing(timeout_seconds=cfg.close_wait_seconds)
+        # Ưu tiên tái sử dụng CapCut đang mở để tránh nhảy app/lạc focus.
+        if not cfg.force_relaunch:
+            existing = self.session.find_main_window()
+            if existing:
+                self.session.apply_window_policy(existing, cfg.window_policy)
+                time.sleep(0.6)
+                return CapCutLaunchResult(process_id=None, hwnd=existing, exe_path="<reuse-existing>")
+
+        if cfg.force_relaunch:
+            self.session.close_existing(timeout_seconds=cfg.close_wait_seconds)
+
         launch = self.session.launch(self.exe_candidates, timeout_seconds=cfg.launch_timeout_seconds)
         if launch.hwnd:
             self.session.apply_window_policy(launch.hwnd, cfg.window_policy)
@@ -1114,7 +1125,8 @@ class BatchExportRunner:
                         steps=nav.steps,
                     )
                 )
-                self.session.close_existing(timeout_seconds=cfg.close_wait_seconds)
+                if cfg.force_relaunch:
+                    self.session.close_existing(timeout_seconds=cfg.close_wait_seconds)
                 continue
 
             act = self.exporter.trigger_export(launch.hwnd)
@@ -1132,7 +1144,8 @@ class BatchExportRunner:
                         steps=nav.steps + act.steps,
                     )
                 )
-                self.session.close_existing(timeout_seconds=cfg.close_wait_seconds)
+                if cfg.force_relaunch:
+                    self.session.close_existing(timeout_seconds=cfg.close_wait_seconds)
                 continue
 
             prog = self.watcher.wait_until_done()
@@ -1150,7 +1163,8 @@ class BatchExportRunner:
                         steps=nav.steps + act.steps + prog.steps,
                     )
                 )
-                self.session.close_existing(timeout_seconds=cfg.close_wait_seconds)
+                if cfg.force_relaunch:
+                    self.session.close_existing(timeout_seconds=cfg.close_wait_seconds)
                 continue
 
             results.append(
@@ -1165,7 +1179,7 @@ class BatchExportRunner:
             )
             self._log(f"[{idx}/{len(cfg.project_names)}] done project={name} in {elapsed:.1f}s")
 
-            if cfg.relaunch_each_project:
+            if cfg.relaunch_each_project and cfg.force_relaunch:
                 self.session.close_existing(timeout_seconds=cfg.close_wait_seconds)
 
         return results
