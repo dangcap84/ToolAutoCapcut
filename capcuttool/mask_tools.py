@@ -610,6 +610,11 @@ def apply_mask_to_draft(
     seg_support_refs = _ensure_segment_support_refs(materials)
     transition_ids = _collect_transition_ids(materials)
 
+    # Giữ snapshot line video gốc để đẩy lên line trên (giữ material_id + transition đúng vị trí giữa clip).
+    original_main_segments: list[dict[str, Any]] = [
+        _clone(s) for s in main_segments if isinstance(s, dict)
+    ]
+
     if bg_paths:
         seg_template = _clone(main_segments[0])
         vm_template = _pick_video_material_template(materials, template_materials)
@@ -661,31 +666,25 @@ def apply_mask_to_draft(
             seg["source_timerange"] = {"start": int(src_start), "duration": int(src_dur)}
             seg["render_index"] = 0
             seg["track_render_index"] = 0
-            seg["enable_video_mask"] = True
-            seg["enable_adjust_mask"] = True
-            old_refs = seg.get("extra_material_refs") if isinstance(seg.get("extra_material_refs"), list) else []
-            keep_transition_refs = [r for r in old_refs if str(r) in transition_ids]
-            seg["extra_material_refs"] = _merge_refs_keep_order(keep_transition_refs, list(seg_support_refs))
+            seg["enable_video_mask"] = False
+            seg["enable_adjust_mask"] = False
+            # Background line không giữ transition refs để tránh transition chạy sai tầng.
+            seg["extra_material_refs"] = list(seg_support_refs)
             rebuilt.append(seg)
 
         main_track["segments"] = rebuilt
-    else:
-        for seg in main_segments:
-            if isinstance(seg, dict):
-                seg["enable_video_mask"] = True
-                seg["enable_adjust_mask"] = True
-                old_refs = seg.get("extra_material_refs") if isinstance(seg.get("extra_material_refs"), list) else []
-                keep_transition_refs = [r for r in old_refs if str(r) in transition_ids]
-                seg["extra_material_refs"] = _merge_refs_keep_order(keep_transition_refs, list(seg_support_refs))
 
-    # 2) tạo line trên (flag=2) bằng cách clone trực tiếp từng segment hiện tại (không combination).
-    # Cách này giữ timeline/cut giống line chính, chỉ thêm mask để tránh lỗi từ subdraft-combination.
+    # 2) tạo line trên (flag=2) từ line video gốc (không combination).
+    # Giữ material_id/timing/transition gốc, chỉ thêm mask refs.
     top_track = _ensure_video_track(draft, flag=2)
     top_segments: list[dict[str, Any]] = []
     mask_scale = max(1.0, min(300.0, float(mask_scale_percent))) / 100.0
 
-    current_main_segments = main_track.get("segments") if isinstance(main_track.get("segments"), list) else []
-    for idx, src_seg in enumerate(current_main_segments):
+    source_for_top = original_main_segments if original_main_segments else [
+        _clone(s) for s in (main_track.get("segments") if isinstance(main_track.get("segments"), list) else []) if isinstance(s, dict)
+    ]
+
+    for idx, src_seg in enumerate(source_for_top):
         if not isinstance(src_seg, dict):
             continue
 
@@ -694,16 +693,16 @@ def apply_mask_to_draft(
         top_seg["render_index"] = int(idx)
         top_seg["track_render_index"] = 1
 
-        # reset các cấu phần có thể khiến CapCut coi segment là clip đã bake keyframe.
-        top_seg["clip"] = {
-            "alpha": 1.0,
-            "flip": {"horizontal": False, "vertical": False},
-            "rotation": 0.0,
-            "scale": {"x": float(mask_scale), "y": float(mask_scale)},
-            "transform": {"x": 0.0, "y": 0.0},
-        }
-        top_seg["common_keyframes"] = []
-        top_seg["keyframe_refs"] = []
+        # Giữ nguyên clip/keyframe của segment gốc để không làm mất animation.
+        # Chỉ đảm bảo có clip object hợp lệ nếu thiếu.
+        if not isinstance(top_seg.get("clip"), dict):
+            top_seg["clip"] = {
+                "alpha": 1.0,
+                "flip": {"horizontal": False, "vertical": False},
+                "rotation": 0.0,
+                "scale": {"x": float(mask_scale), "y": float(mask_scale)},
+                "transform": {"x": 0.0, "y": 0.0},
+            }
 
         old_refs = top_seg.get("extra_material_refs") if isinstance(top_seg.get("extra_material_refs"), list) else []
         keep_transition_refs = [r for r in old_refs if str(r) in transition_ids]
