@@ -656,7 +656,8 @@ def apply_mask_to_draft(
     }
     top_seg["common_keyframes"] = []
     top_seg["keyframe_refs"] = []
-    top_seg["enable_adjust_mask"] = False
+    # Bắt buộc bật adjust mask để CapCut hiện UI shape + bo góc.
+    top_seg["enable_adjust_mask"] = True
 
     refs = _ensure_segment_support_refs(materials, include_mask_id=mask_mat["id"], include_draft_id=comb_draft["id"])
     top_seg["extra_material_refs"] = refs
