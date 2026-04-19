@@ -299,6 +299,7 @@ class ProjectNavigationConfig:
     use_keyboard_grid_scan: bool = True
     scan_step_wait_seconds: float = 0.10
     use_uia_tree_first: bool = True
+    allow_scan_fallback: bool = False
     uia_name_match_threshold: float = 0.68
     uia_max_nodes: int = 1200
 
@@ -665,12 +666,15 @@ class ProjectNavigator:
                 steps.append(f"attempt#{attempt}:uia_tree_lookup")
                 opened = self._open_project_by_uia_tree(hwnd, name, steps)
 
-                if not opened:
+                if (not opened) and self.cfg.allow_scan_fallback:
                     steps.append(f"attempt#{attempt}:scan_project_cards")
                     opened = self._find_project_by_scan(hwnd, name, steps)
 
                 if not opened:
-                    steps.append(f"attempt#{attempt}:project_not_opened_after_uia_and_scan")
+                    if self.cfg.allow_scan_fallback:
+                        steps.append(f"attempt#{attempt}:project_not_opened_after_uia_and_scan")
+                    else:
+                        steps.append(f"attempt#{attempt}:project_not_opened_uia_only")
                     continue
 
                 time.sleep(max(0.3, self.cfg.after_open_wait_seconds))
