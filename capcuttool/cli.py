@@ -8,6 +8,7 @@ from media_index import build_scene_pairs
 from project_loader import load_project
 from project_writer import backup_file, write_json_atomic
 from timeline_sync import sec_to_us, sync_draft, sync_meta
+from transition_tools import apply_random_transitions_to_draft, load_transition_catalog
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -17,6 +18,29 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--voices", required=False, help="Scene voices folder (optional)")
     p.add_argument("--mode", choices=["inspect", "sync"], default="inspect")
     p.add_argument("--backup", action="store_true", help="Create backup files before writing")
+
+    p.add_argument(
+        "--transition-mode",
+        choices=["none", "random"],
+        default="none",
+        help="Transition behavior during sync",
+    )
+    p.add_argument(
+        "--transition-effects",
+        default="",
+        help="Comma-separated effect_id list to constrain random transition selection",
+    )
+    p.add_argument(
+        "--transition-duration-us",
+        type=int,
+        default=800000,
+        help="Fallback transition duration (microseconds)",
+    )
+    p.add_argument(
+        "--transition-effect-cache-root",
+        default="",
+        help="CapCut effect cache root (optional override)",
+    )
     return p
 
 
@@ -25,33 +49,57 @@ def _durations_from_media_folders(images: Path, voices: Path) -> list[int]:
     return [sec_to_us(probe_audio_duration_seconds(s.voice_path)) for s in scenes]
 
 
+def _durations_from_tracks_by_type(tracks: list[dict], track_type: str) -> list[int]:
+    typed_tracks = [
+        t for t in tracks
+        if isinstance(t, dict)
+        and str(t.get("type") or t.get("track_type") or "").lower() == track_type
+    ]
+    if not typed_tracks:
+        return []
+
+    # Ưu tiên track có nhiều segment nhất (fix bug cũ: từng sort tăng dần rồi lấy [0]).
+    typed_tracks.sort(key=lambda t: len(t.get("segments") or []), reverse=True)
+
+    for tr in typed_tracks:
+        segs = tr.get("segments") or []
+        if not isinstance(segs, list) or not segs:
+            continue
+
+        segs = sorted(segs, key=lambda s: int(((s.get("target_timerange") or {}).get("start") or 0)))
+        out: list[int] = []
+        for seg in segs:
+            if not isinstance(seg, dict):
+                continue
+            tgt = seg.get("target_timerange") or {}
+            src = seg.get("source_timerange") or {}
+            dur = int(tgt.get("duration") or src.get("duration") or 0)
+            if dur > 0:
+                out.append(dur)
+
+        if out:
+            return out
+
+    return []
+
+
 def _durations_from_project_audio_segments(project: Path) -> list[int]:
     bundle = load_project(project)
     tracks = bundle.main_draft.get("tracks")
     if not isinstance(tracks, list):
         raise ValueError("draft_content.json missing 'tracks' list")
 
-    audio_tracks = [t for t in tracks if str(t.get("type") or t.get("track_type") or "").lower() == "audio"]
-    if not audio_tracks:
-        raise ValueError("No audio track found in draft to infer segment durations")
+    # 1) Ưu tiên audio track.
+    audio_durations = _durations_from_tracks_by_type(tracks, "audio")
+    if audio_durations:
+        return audio_durations
 
-    audio_tracks.sort(key=lambda t: len(t.get("segments") or []))
-    segs = audio_tracks[0].get("segments") or []
-    if not segs:
-        raise ValueError("Audio track has no segments")
+    # 2) Fallback an toàn: nếu project chưa có audio segments, dùng duration từ video segments.
+    video_durations = _durations_from_tracks_by_type(tracks, "video")
+    if video_durations:
+        return video_durations
 
-    segs = sorted(segs, key=lambda s: int(((s.get("target_timerange") or {}).get("start") or 0)))
-    out: list[int] = []
-    for seg in segs:
-        tgt = seg.get("target_timerange") or {}
-        src = seg.get("source_timerange") or {}
-        dur = int(tgt.get("duration") or src.get("duration") or 0)
-        if dur > 0:
-            out.append(dur)
-
-    if not out:
-        raise ValueError("Cannot infer any positive duration from audio segments")
-    return out
+    raise ValueError("No usable audio/video segments to infer scene durations")
 
 
 def _resolve_durations(project: Path, images: Path | None, voices: Path | None) -> list[int]:
@@ -78,7 +126,16 @@ def run_inspect(project: Path, images: Path | None = None, voices: Path | None =
     return 0
 
 
-def run_sync(project: Path, images: Path | None = None, voices: Path | None = None, backup: bool = False) -> int:
+def run_sync(
+    project: Path,
+    images: Path | None = None,
+    voices: Path | None = None,
+    backup: bool = False,
+    transition_mode: str = "none",
+    transition_effects: str = "",
+    transition_duration_us: int = 800_000,
+    transition_effect_cache_root: Path | None = None,
+) -> int:
     bundle = load_project(project)
     durations_us = _resolve_durations(project, images, voices)
 
@@ -93,12 +150,39 @@ def run_sync(project: Path, images: Path | None = None, voices: Path | None = No
             backup_files.append(str(backup_file(bundle.meta_path)))
 
     stats_main = sync_draft(bundle.main_draft, durations_us)
+
+    transition_count = 0
+    if transition_mode == "random":
+        selected_effect_ids = [s.strip() for s in transition_effects.split(",") if s.strip()]
+        catalog = load_transition_catalog(
+            effect_cache_root=transition_effect_cache_root,
+            sample_project_draft=bundle.main_draft,
+        )
+        transition_count = apply_random_transitions_to_draft(
+            bundle.main_draft,
+            catalog,
+            selected_effect_ids=selected_effect_ids,
+            duration_us=transition_duration_us,
+        )
+
     write_json_atomic(bundle.main_draft_path, bundle.main_draft)
     changed_files.append(str(bundle.main_draft_path))
 
     for p in bundle.timeline_draft_paths:
         draft = bundle.timelines[p]
         sync_draft(draft, durations_us)
+        if transition_mode == "random":
+            selected_effect_ids = [s.strip() for s in transition_effects.split(",") if s.strip()]
+            catalog = load_transition_catalog(
+                effect_cache_root=transition_effect_cache_root,
+                sample_project_draft=draft,
+            )
+            apply_random_transitions_to_draft(
+                draft,
+                catalog,
+                selected_effect_ids=selected_effect_ids,
+                duration_us=transition_duration_us,
+            )
         write_json_atomic(p, draft)
         changed_files.append(str(p))
 
@@ -115,6 +199,7 @@ def run_sync(project: Path, images: Path | None = None, voices: Path | None = No
     print(f"video_segments_updated={stats_main.video_segments_updated}")
     print(f"audio_segments_updated={stats_main.audio_segments_updated}")
     print(f"total_duration_us={stats_main.total_duration_us}")
+    print(f"transitions_added={transition_count}")
     print("changed_files:")
     for f in changed_files:
         print(f" - {f}")
@@ -138,7 +223,23 @@ def main() -> int:
 
     if args.mode == "inspect":
         return run_inspect(project, images, voices)
-    return run_sync(project, images, voices, args.backup)
+
+    transition_effect_cache_root = (
+        Path(args.transition_effect_cache_root)
+        if args.transition_effect_cache_root.strip()
+        else None
+    )
+
+    return run_sync(
+        project,
+        images,
+        voices,
+        args.backup,
+        transition_mode=args.transition_mode,
+        transition_effects=args.transition_effects,
+        transition_duration_us=args.transition_duration_us,
+        transition_effect_cache_root=transition_effect_cache_root,
+    )
 
 
 if __name__ == "__main__":
