@@ -452,16 +452,22 @@ class ProjectNavigator:
         return False
 
     @staticmethod
-    def _focus_window(hwnd: int) -> bool:
+    def _focus_window(hwnd: int, timeout_seconds: float = 2.5) -> bool:
         if not hasattr(ctypes, "windll") or not hwnd:
             return False
         user32 = ctypes.windll.user32
         SW_RESTORE = 9
-        user32.ShowWindow(hwnd, SW_RESTORE)
-        time.sleep(0.05)
-        user32.BringWindowToTop(hwnd)
-        user32.SetForegroundWindow(hwnd)
-        return True
+        deadline = time.time() + max(0.5, timeout_seconds)
+
+        while time.time() < deadline:
+            user32.ShowWindow(hwnd, SW_RESTORE)
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            time.sleep(0.08)
+            if int(user32.GetForegroundWindow()) == int(hwnd):
+                return True
+
+        return False
 
     def _activate_capcut_surface(self, hwnd: int) -> bool:
         rect = self._get_window_rect(hwnd)
@@ -533,7 +539,10 @@ class ProjectNavigator:
         for attempt in range(1, max(1, self.cfg.retries) + 1):
             try:
                 steps.append(f"attempt#{attempt}:focus_capcut_window")
-                self._focus_window(hwnd)
+                if not self._focus_window(hwnd):
+                    steps.append(f"attempt#{attempt}:focus_failed_not_foreground")
+                    time.sleep(0.3)
+                    continue
                 self._activate_capcut_surface(hwnd)
 
                 steps.append(f"attempt#{attempt}:reset_to_home")
@@ -639,16 +648,22 @@ class ExportActionRunner:
         self.cfg = cfg or ExportActionConfig()
 
     @staticmethod
-    def _focus_window(hwnd: int) -> bool:
+    def _focus_window(hwnd: int, timeout_seconds: float = 2.5) -> bool:
         if not hasattr(ctypes, "windll") or not hwnd:
             return False
         user32 = ctypes.windll.user32
         SW_RESTORE = 9
-        user32.ShowWindow(hwnd, SW_RESTORE)
-        time.sleep(0.05)
-        user32.BringWindowToTop(hwnd)
-        user32.SetForegroundWindow(hwnd)
-        return True
+        deadline = time.time() + max(0.5, timeout_seconds)
+
+        while time.time() < deadline:
+            user32.ShowWindow(hwnd, SW_RESTORE)
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            time.sleep(0.08)
+            if int(user32.GetForegroundWindow()) == int(hwnd):
+                return True
+
+        return False
 
     @staticmethod
     def _get_window_rect(hwnd: int) -> WindowRect | None:
@@ -690,7 +705,10 @@ class ExportActionRunner:
         for attempt in range(1, max(1, self.cfg.search_retries) + 1):
             try:
                 steps.append(f"attempt#{attempt}:focus_editor")
-                self._focus_window(hwnd)
+                if not self._focus_window(hwnd):
+                    steps.append(f"attempt#{attempt}:focus_failed_not_foreground")
+                    time.sleep(0.3)
+                    continue
                 self.backend.press("esc")
                 time.sleep(0.15)
 
