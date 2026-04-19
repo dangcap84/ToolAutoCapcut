@@ -286,11 +286,18 @@ def _build_draft_material(
     dm.setdefault("category_id", "")
     dm.setdefault("category_name", "")
     dm.setdefault("formula_id", "")
-    dm.setdefault("draft_file_path", "")
-    dm.setdefault("draft_cover_path", "")
-    dm.setdefault("draft_config_path", "")
     dm.setdefault("precompile_combination", False)
-    dm.setdefault("aimusic_mv_template_info", "")
+    dm.setdefault("aimusic_mv_template_info", None)
+
+    # Một số bản CapCut sẽ dọn overlay nếu draft material thiếu các placeholder subdraft path.
+    # Tạo placeholder an toàn theo schema thực tế để tránh bị sanitize mất mask.
+    if not str(dm.get("draft_file_path") or "").strip() or not str(dm.get("draft_cover_path") or "").strip() or not str(dm.get("draft_config_path") or "").strip():
+        token = _new_id()
+        sub = _new_id()
+        base = f"##_draftpath_placeholder_{token}_##\\subdraft\\{sub}"
+        dm["draft_file_path"] = f"{base}\\draft_content.json"
+        dm["draft_cover_path"] = f"{base}\\draft_cover.jpg"
+        dm["draft_config_path"] = f"{base}\\sub_draft_config.json"
 
     # Luôn lấy draft hiện tại của project làm base để tránh bị kéo media/template
     # từ project mẫu (vd Test1-mask) sang project đích.
@@ -686,20 +693,55 @@ def apply_mask_to_draft(
     top_track = _ensure_video_track(draft, flag=2)
 
     # Ưu tiên schema segment từ template flag=2 để đảm bảo mask editable (shape/size).
-    # Nếu không có template thì mới fallback từ main segment và reset các trường dễ gây nhiễu.
+    # Không có template thì dùng schema cứng gần với project mask chuẩn (không clone main segment).
     template_top_seg = _find_video_track_segment(template_draft, flag=2)
-    top_seg = _clone(template_top_seg) if isinstance(template_top_seg, dict) else _clone(main_segments[0])
+    if isinstance(template_top_seg, dict):
+        top_seg = _clone(template_top_seg)
+    else:
+        top_seg = {
+            "id": _new_id(),
+            "material_id": "",
+            "target_timerange": {"start": 0, "duration": int(total_duration_us)},
+            "source_timerange": {"start": 0, "duration": int(total_duration_us)},
+            "render_index": 1,
+            "track_render_index": 1,
+            "state": 0,
+            "visible": True,
+            "is_placeholder": False,
+            "reverse": False,
+            "cartoon": False,
+            "group_id": "",
+            "template_id": "",
+            "template_scene": "default",
+            "track_attribute": 0,
+            "uniform_scale": {"on": True, "value": 1.0},
+            "volume": 1.0,
+            "last_nonzero_volume": 1.0,
+            "intensifies_audio": False,
+            "is_tone_modify": False,
+            "enable_video_mask": True,
+            "enable_adjust_mask": False,
+            "common_keyframes": [],
+            "keyframe_refs": [],
+            "clip": {
+                "alpha": 1.0,
+                "flip": {"horizontal": False, "vertical": False},
+                "rotation": 0.0,
+                "scale": {"x": 1.0, "y": 1.0},
+                "transform": {"x": 0.0, "y": 0.0},
+            },
+            "hdr_settings": {"intensity": 1.0, "mode": 1, "nits": 1000},
+        }
+
     top_seg["id"] = _new_id()
     top_seg["material_id"] = comb_video["id"]
     top_seg["target_timerange"] = {"start": 0, "duration": int(total_duration_us)}
     top_seg["source_timerange"] = {"start": 0, "duration": int(total_duration_us)}
     top_seg["render_index"] = 1
-    top_seg["track_render_index"] = 2
+    top_seg["track_render_index"] = 1
     top_seg["enable_video_mask"] = True
-    top_seg["enable_adjust_mask"] = True
 
-    # reset các cấu phần có thể khiến CapCut coi segment là clip đã bake keyframe,
-    # từ đó không cho chỉnh shape/size mask như mong muốn.
+    # reset các cấu phần có thể khiến CapCut coi segment là clip đã bake keyframe.
     mask_scale = max(1.0, min(300.0, float(mask_scale_percent))) / 100.0
     top_seg["clip"] = {
         "alpha": 1.0,
@@ -722,9 +764,9 @@ def apply_mask_to_draft(
     if mask_id and not any(str((m or {}).get("id") or "") == mask_id for m in masks_final if isinstance(m, dict)):
         masks_final.append(mask_mat)
 
-    # Hard guard: ép cờ mask ở trạng thái ON để tránh project mới bị mất mask UI sau khi save/open.
+    # Hard guard: giữ ON cho video mask; adjust_mask theo baseline chuẩn để CapCut hiện panel shape/bo góc.
     top_seg["enable_video_mask"] = True
-    top_seg["enable_adjust_mask"] = True
+    top_seg["enable_adjust_mask"] = False
     top_seg["visible"] = True
     top_seg["state"] = 0
     top_seg["is_placeholder"] = False
