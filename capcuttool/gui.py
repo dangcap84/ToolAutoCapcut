@@ -88,7 +88,7 @@ MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
 
 I18N_TEXTS = {
     "vi": {
-        "app_title": "CapCut Sync v1.0.13",
+        "app_title": "CapCut Sync v1.0.14",
         "header_title": "Đồng bộ dự án CapCut",
         "header_subtitle": "Chọn dự án ở bên phải, sau đó chạy thao tác ở các tab chức năng.",
         "language": "Ngôn ngữ",
@@ -110,7 +110,7 @@ I18N_TEXTS = {
         "log_subtitle": "Nhật ký thao tác (đồng bộ / chuyển cảnh / keyframe / lỗi).",
     },
     "en": {
-        "app_title": "CapCut Sync v1.0.13",
+        "app_title": "CapCut Sync v1.0.14",
         "header_title": "CapCut Project Sync",
         "header_subtitle": "Select projects on the right, then run actions from feature tabs.",
         "language": "Language",
@@ -2252,33 +2252,47 @@ class CapCutGui:
             win_w = max(1, win_right - win_left)
             win_h = max(1, win_bottom - win_top)
 
+            # ép CapCut lên foreground trước khi cho khoanh vùng
+            fg_ok = False
+            try:
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                user32.BringWindowToTop(hwnd)
+                user32.SetForegroundWindow(hwnd)
+                deadline_focus = time.time() + 3.0
+                while time.time() < deadline_focus:
+                    if int(user32.GetForegroundWindow()) == int(hwnd):
+                        fg_ok = True
+                        break
+                    user32.SetForegroundWindow(hwnd)
+                    time.sleep(0.08)
+            except Exception:
+                fg_ok = False
+
+            if not fg_ok:
+                messagebox.showerror("CapCut chưa sẵn sàng", "Vui lòng đưa cửa sổ CapCut lên trước rồi bấm Khoanh vùng lại.")
+                return
+
             overlay = tk.Toplevel(self.root)
             overlay.title("Khoanh vùng danh sách dự án")
             overlay.configure(bg="black")
             overlay.attributes("-topmost", True)
             try:
-                overlay.attributes("-alpha", 0.25)
+                overlay.attributes("-alpha", 0.22)
             except Exception:
                 pass
-
-            screen_w = overlay.winfo_screenwidth()
-            screen_h = overlay.winfo_screenheight()
-            overlay.geometry(f"{screen_w}x{screen_h}+0+0")
+            overlay.geometry(f"{win_w}x{win_h}+{win_left}+{win_top}")
             overlay.resizable(False, False)
 
             canvas = tk.Canvas(overlay, bg="black", highlightthickness=0, cursor="cross")
             canvas.pack(fill="both", expand=True)
 
-            hint = (
-                "Kéo chuột để khoanh vùng list project. "
-                "Enter: lưu | Esc / chuột phải: huỷ"
-            )
-            canvas.create_text(24, 24, anchor="nw", fill="#ffffff", text=hint, font=("Segoe UI", 11, "bold"))
+            hint = "Kéo chuột khoanh vùng list project trong cửa sổ CapCut | Esc: huỷ"
+            canvas.create_text(16, 16, anchor="nw", fill="#ffffff", text=hint, font=("Segoe UI", 10, "bold"))
 
             state = {"x0": None, "y0": None, "rect": None, "result": None}
 
             def on_press(event):
-                state["x0"], state["y0"] = event.x_root, event.y_root
+                state["x0"], state["y0"] = event.x, event.y
                 if state["rect"] is not None:
                     canvas.delete(state["rect"])
                 state["rect"] = canvas.create_rectangle(event.x, event.y, event.x, event.y, outline="#22d3ee", width=2)
@@ -2286,28 +2300,28 @@ class CapCutGui:
             def on_drag(event):
                 if state["rect"] is None or state["x0"] is None or state["y0"] is None:
                     return
-                x0_local = state["x0"]
-                y0_local = state["y0"]
-                canvas.coords(state["rect"], x0_local, y0_local, event.x_root, event.y_root)
+                canvas.coords(state["rect"], state["x0"], state["y0"], event.x, event.y)
 
-            def finish_selection():
+            def finish_selection(event=None):
                 if state["x0"] is None or state["y0"] is None:
                     return
-                x1, y1 = state["x0"], state["y0"]
-                x2, y2 = overlay.winfo_pointerx(), overlay.winfo_pointery()
-                sel_l, sel_r = sorted((x1, x2))
-                sel_t, sel_b = sorted((y1, y2))
-                if (sel_r - sel_l) < 12 or (sel_b - sel_t) < 12:
+                x2 = event.x if event is not None else overlay.winfo_pointerx() - win_left
+                y2 = event.y if event is not None else overlay.winfo_pointery() - win_top
+                left_local, right_local = sorted((int(state["x0"]), int(x2)))
+                top_local, bottom_local = sorted((int(state["y0"]), int(y2)))
+                if (right_local - left_local) < 12 or (bottom_local - top_local) < 12:
                     self._set_status("Vùng khoanh quá nhỏ", "error")
                     return
-                state["result"] = (sel_l, sel_t, sel_r, sel_b)
+                state["result"] = (
+                    win_left + left_local,
+                    win_top + top_local,
+                    win_left + right_local,
+                    win_top + bottom_local,
+                )
                 overlay.destroy()
 
-            def on_release(_event):
-                finish_selection()
-
-            def on_enter(_event):
-                finish_selection()
+            def on_release(event):
+                finish_selection(event)
 
             def on_cancel(_event=None):
                 state["result"] = None
@@ -2316,7 +2330,6 @@ class CapCutGui:
             canvas.bind("<ButtonPress-1>", on_press)
             canvas.bind("<B1-Motion>", on_drag)
             canvas.bind("<ButtonRelease-1>", on_release)
-            overlay.bind("<Return>", on_enter)
             overlay.bind("<Escape>", on_cancel)
             overlay.bind("<ButtonPress-3>", on_cancel)
 
