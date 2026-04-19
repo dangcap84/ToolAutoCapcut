@@ -84,11 +84,11 @@ SUBTEXT = "#94a3b8"
 TRANSITION_CATALOG_LIMIT = 50
 BULK_ACTION_WARNING_THRESHOLD = 5
 MASK_BACKGROUND_CATALOG_PATH = BASE_DIR / "mask_background_catalog.json"
-MASK_TEMPLATE_PROJECT_NAME = "Test1"
+MASK_TEMPLATE_PROJECT_NAME = "__HARD_TEMPLATE_INTERNAL__"
 
 I18N_TEXTS = {
     "vi": {
-        "app_title": "CapCut Sync v1.1.5",
+        "app_title": "CapCut Sync v1.1.6",
         "header_title": "Đồng bộ dự án CapCut",
         "header_subtitle": "Chọn dự án ở bên phải, sau đó chạy thao tác ở các tab chức năng.",
         "language": "Ngôn ngữ",
@@ -110,7 +110,7 @@ I18N_TEXTS = {
         "log_subtitle": "Nhật ký thao tác (đồng bộ / chuyển cảnh / keyframe / lỗi).",
     },
     "en": {
-        "app_title": "CapCut Sync v1.1.5",
+        "app_title": "CapCut Sync v1.1.6",
         "header_title": "CapCut Project Sync",
         "header_subtitle": "Select projects on the right, then run actions from feature tabs.",
         "language": "Language",
@@ -2004,26 +2004,14 @@ class CapCutGui:
         output_buf = io.StringIO()
         overall_code = 0
 
+        # Hard-template mode: không phụ thuộc bất kỳ project mẫu nào (Test1/Test1-mask).
+        # apply_mask_to_draft sẽ dùng schema fallback nội bộ trong mask_tools.py.
         mask_template_draft: dict | None = None
-        template_loaded_from = "project_fallback"
-        try:
-            for template_name in [MASK_TEMPLATE_PROJECT_NAME, "Test1-mask"]:
-                template_path = DEFAULT_CAPCUT_PROJECT_ROOT / template_name / "draft_content.json"
-                if not template_path.exists():
-                    continue
-                cand = json.loads(template_path.read_text(encoding="utf-8"))
-                mats = cand.get("materials") if isinstance(cand, dict) else None
-                cm = mats.get("common_mask") if isinstance(mats, dict) else None
-                if isinstance(cm, list) and cm:
-                    mask_template_draft = cand
-                    template_loaded_from = template_name
-                    break
-        except Exception:
-            mask_template_draft = None
+        template_loaded_from = "hard_template_internal"
 
         try:
             with contextlib.redirect_stdout(output_buf):
-                print(f"mask_template={'external' if mask_template_draft else 'project_fallback'} source={template_loaded_from}")
+                print(f"mask_template=hard_template source={template_loaded_from}")
                 for idx, project in enumerate(projects, start=1):
                     project_dir = Path(project)
                     print(f"--- mask project {idx}/{len(projects)}: {project_dir} ---")
