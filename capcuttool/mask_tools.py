@@ -594,7 +594,13 @@ def apply_mask_to_draft(
         canvas_h=canvas_h,
         template_mask=template_mask,
     )
-    masks.append(mask_mat)
+    mask_id = str(mask_mat.get("id") or "").strip()
+    if not mask_id:
+        mask_id = _new_id()
+        mask_mat["id"] = mask_id
+    # Hard guard: luôn đảm bảo materials.common_mask có object mask vừa tạo.
+    if not any(str((m or {}).get("id") or "") == mask_id for m in masks if isinstance(m, dict)):
+        masks.append(mask_mat)
 
     # 1) line chính: thay bằng background nếu user có truyền vào.
     bg_paths = [
@@ -705,8 +711,16 @@ def apply_mask_to_draft(
     top_seg["common_keyframes"] = []
     top_seg["keyframe_refs"] = []
 
-    refs = _ensure_segment_support_refs(materials, include_mask_id=mask_mat["id"], include_draft_id=comb_draft["id"])
+    refs = _ensure_segment_support_refs(materials, include_mask_id=mask_id, include_draft_id=comb_draft["id"])
+    if mask_id and mask_id not in refs:
+        # Vị trí refs chuẩn: draft,speed,placeholder,mask,canvas,...
+        refs.insert(min(3, len(refs)), mask_id)
     top_seg["extra_material_refs"] = refs
+
+    # Final self-heal: re-check lại common_mask + ref mask trước khi ghi file.
+    masks_final = _ensure_material_list(materials, "common_mask")
+    if mask_id and not any(str((m or {}).get("id") or "") == mask_id for m in masks_final if isinstance(m, dict)):
+        masks_final.append(mask_mat)
 
     # Hard guard: ép cờ mask ở trạng thái ON để tránh project mới bị mất mask UI sau khi save/open.
     top_seg["enable_video_mask"] = True
