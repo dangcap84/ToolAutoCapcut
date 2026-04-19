@@ -335,6 +335,31 @@ def _ensure_segment_support_refs(materials: dict[str, Any], include_mask_id: str
     return refs
 
 
+def _collect_transition_ids(materials: dict[str, Any]) -> set[str]:
+    transitions = materials.get("transitions") if isinstance(materials, dict) else None
+    out: set[str] = set()
+    if isinstance(transitions, list):
+        for t in transitions:
+            if isinstance(t, dict):
+                tid = str(t.get("id") or "").strip()
+                if tid:
+                    out.add(tid)
+    return out
+
+
+def _merge_refs_keep_order(primary: list[str], secondary: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for src in (primary, secondary):
+        for rid in src:
+            sid = str(rid or "").strip()
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            out.append(sid)
+    return out
+
+
 def _resolve_background_path_for_capcut(path_str: str) -> str:
     p = Path(path_str)
     if not p.name:
@@ -533,6 +558,7 @@ def apply_mask_to_draft(
 
     # Background/main line không được gắn mask ref, nếu không sẽ bị ăn mask ngoài ý muốn.
     seg_support_refs = _ensure_segment_support_refs(materials)
+    transition_ids = _collect_transition_ids(materials)
 
     if bg_paths:
         seg_template = _clone(main_segments[0])
@@ -587,7 +613,9 @@ def apply_mask_to_draft(
             seg["track_render_index"] = 0
             seg["enable_video_mask"] = True
             seg["enable_adjust_mask"] = True
-            seg["extra_material_refs"] = list(seg_support_refs)
+            old_refs = seg.get("extra_material_refs") if isinstance(seg.get("extra_material_refs"), list) else []
+            keep_transition_refs = [r for r in old_refs if str(r) in transition_ids]
+            seg["extra_material_refs"] = _merge_refs_keep_order(keep_transition_refs, list(seg_support_refs))
             rebuilt.append(seg)
 
         main_track["segments"] = rebuilt
@@ -596,7 +624,9 @@ def apply_mask_to_draft(
             if isinstance(seg, dict):
                 seg["enable_video_mask"] = True
                 seg["enable_adjust_mask"] = True
-                seg["extra_material_refs"] = list(seg_support_refs)
+                old_refs = seg.get("extra_material_refs") if isinstance(seg.get("extra_material_refs"), list) else []
+                keep_transition_refs = [r for r in old_refs if str(r) in transition_ids]
+                seg["extra_material_refs"] = _merge_refs_keep_order(keep_transition_refs, list(seg_support_refs))
 
     # 2) tạo track trên cùng chứa 1 clip combination + mask.
     top_track = _ensure_video_track(draft, flag=2)
