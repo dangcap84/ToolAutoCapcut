@@ -298,6 +298,9 @@ class ProjectNavigationConfig:
     name_match_threshold: float = 0.58
     use_keyboard_grid_scan: bool = True
     scan_step_wait_seconds: float = 0.10
+    use_uia_tree_first: bool = True
+    uia_name_match_threshold: float = 0.68
+    uia_max_nodes: int = 1200
 
 
 @dataclass
@@ -523,6 +526,111 @@ class ProjectNavigator:
         user32.GetWindowTextW(hwnd, buff, length + 1)
         return (buff.value or "").strip()
 
+    @staticmethod
+    def _rect_intersection_area(a: WindowRect, b: WindowRect) -> int:
+        left = max(a.left, b.left)
+        top = max(a.top, b.top)
+        right = min(a.right, b.right)
+        bottom = min(a.bottom, b.bottom)
+        if right <= left or bottom <= top:
+            return 0
+        return int((right - left) * (bottom - top))
+
+    def _open_project_by_uia_tree(self, hwnd: int, project_name: str, steps: list[str]) -> bool:
+        if not self.cfg.use_uia_tree_first:
+            return False
+
+        try:
+            from pywinauto import Desktop  # type: ignore
+        except Exception as exc:
+            steps.append(f"uia:unavailable:{exc}")
+            return False
+
+        win_rect = self._get_window_rect(hwnd)
+        if win_rect is None or win_rect.width <= 0 or win_rect.height <= 0:
+            steps.append("uia:no_window_rect")
+            return False
+        list_rect = self._project_list_rect(win_rect)
+
+        try:
+            window = Desktop(backend="uia").window(handle=int(hwnd))
+            descendants = window.descendants()
+        except Exception as exc:
+            steps.append(f"uia:descendants_failed:{exc}")
+            return False
+
+        target = self._norm_text(project_name)
+        if not target:
+            steps.append("uia:empty_target")
+            return False
+
+        best = None
+        best_score = 0.0
+        checked = 0
+
+        for elem in descendants:
+            if checked >= max(100, int(self.cfg.uia_max_nodes)):
+                break
+            checked += 1
+            try:
+                info = elem.element_info
+                name = (getattr(info, "name", "") or "").strip()
+                if not name:
+                    continue
+
+                score = self._name_score(project_name, name)
+                if score < self.cfg.uia_name_match_threshold:
+                    continue
+
+                rect = getattr(info, "rectangle", None)
+                if rect is None:
+                    continue
+                cand_rect = WindowRect(int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
+                if cand_rect.width <= 2 or cand_rect.height <= 2:
+                    continue
+
+                overlap = self._rect_intersection_area(list_rect, cand_rect)
+                if overlap <= 0:
+                    continue
+
+                # Ưu tiên điểm cao + overlap lớn để né match sai ngoài danh sách project
+                rank = (score, overlap)
+                if best is None or rank > best[0]:
+                    best = (rank, elem, name, cand_rect)
+                    best_score = score
+            except Exception:
+                continue
+
+        steps.append(f"uia:checked_nodes={checked}")
+        if best is None:
+            steps.append(f"uia:not_found:best_score={best_score:.2f}")
+            return False
+
+        _, elem, matched_name, cand_rect = best
+        steps.append(f"uia:matched_name={matched_name}")
+        steps.append(
+            f"uia:rect={cand_rect.left},{cand_rect.top},{cand_rect.right},{cand_rect.bottom}:score={best_score:.2f}"
+        )
+
+        try:
+            try:
+                elem.set_focus()
+            except Exception:
+                pass
+            try:
+                elem.double_click_input()
+            except Exception:
+                cx = int((cand_rect.left + cand_rect.right) / 2)
+                cy = int((cand_rect.top + cand_rect.bottom) / 2)
+                self.backend.click_abs(cx, cy, clicks=max(2, int(self.cfg.result_open_clicks)))
+
+            time.sleep(max(0.3, self.cfg.after_open_wait_seconds))
+            self.backend.press("enter")
+            return True
+        except Exception as exc:
+            steps.append(f"uia:open_failed:{exc}")
+            return False
+
     def open_project(self, hwnd: int, project_name: str) -> ProjectNavigationResult:
         name = (project_name or "").strip()
         if not name:
@@ -554,10 +662,15 @@ class ProjectNavigator:
                 if before_title:
                     steps.append(f"attempt#{attempt}:title_before={before_title}")
 
-                steps.append(f"attempt#{attempt}:scan_project_cards")
-                opened = self._find_project_by_scan(hwnd, name, steps)
+                steps.append(f"attempt#{attempt}:uia_tree_lookup")
+                opened = self._open_project_by_uia_tree(hwnd, name, steps)
+
                 if not opened:
-                    steps.append(f"attempt#{attempt}:scan_not_opened")
+                    steps.append(f"attempt#{attempt}:scan_project_cards")
+                    opened = self._find_project_by_scan(hwnd, name, steps)
+
+                if not opened:
+                    steps.append(f"attempt#{attempt}:project_not_opened_after_uia_and_scan")
                     continue
 
                 time.sleep(max(0.3, self.cfg.after_open_wait_seconds))
