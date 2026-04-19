@@ -84,11 +84,11 @@ SUBTEXT = "#94a3b8"
 TRANSITION_CATALOG_LIMIT = 50
 BULK_ACTION_WARNING_THRESHOLD = 5
 MASK_BACKGROUND_CATALOG_PATH = BASE_DIR / "mask_background_catalog.json"
-MASK_TEMPLATE_PROJECT_NAME = "Test1-mask"
+MASK_TEMPLATE_PROJECT_NAME = "Test1"
 
 I18N_TEXTS = {
     "vi": {
-        "app_title": "CapCut Sync v1.1.4",
+        "app_title": "CapCut Sync v1.1.5",
         "header_title": "Đồng bộ dự án CapCut",
         "header_subtitle": "Chọn dự án ở bên phải, sau đó chạy thao tác ở các tab chức năng.",
         "language": "Ngôn ngữ",
@@ -110,7 +110,7 @@ I18N_TEXTS = {
         "log_subtitle": "Nhật ký thao tác (đồng bộ / chuyển cảnh / keyframe / lỗi).",
     },
     "en": {
-        "app_title": "CapCut Sync v1.1.4",
+        "app_title": "CapCut Sync v1.1.5",
         "header_title": "CapCut Project Sync",
         "header_subtitle": "Select projects on the right, then run actions from feature tabs.",
         "language": "Language",
@@ -2005,16 +2005,25 @@ class CapCutGui:
         overall_code = 0
 
         mask_template_draft: dict | None = None
+        template_loaded_from = "project_fallback"
         try:
-            template_path = DEFAULT_CAPCUT_PROJECT_ROOT / MASK_TEMPLATE_PROJECT_NAME / "draft_content.json"
-            if template_path.exists():
-                mask_template_draft = json.loads(template_path.read_text(encoding="utf-8"))
+            for template_name in [MASK_TEMPLATE_PROJECT_NAME, "Test1-mask"]:
+                template_path = DEFAULT_CAPCUT_PROJECT_ROOT / template_name / "draft_content.json"
+                if not template_path.exists():
+                    continue
+                cand = json.loads(template_path.read_text(encoding="utf-8"))
+                mats = cand.get("materials") if isinstance(cand, dict) else None
+                cm = mats.get("common_mask") if isinstance(mats, dict) else None
+                if isinstance(cm, list) and cm:
+                    mask_template_draft = cand
+                    template_loaded_from = template_name
+                    break
         except Exception:
             mask_template_draft = None
 
         try:
             with contextlib.redirect_stdout(output_buf):
-                print(f"mask_template={'external' if mask_template_draft else 'project_fallback'}")
+                print(f"mask_template={'external' if mask_template_draft else 'project_fallback'} source={template_loaded_from}")
                 for idx, project in enumerate(projects, start=1):
                     project_dir = Path(project)
                     print(f"--- mask project {idx}/{len(projects)}: {project_dir} ---")
