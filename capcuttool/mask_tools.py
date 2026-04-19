@@ -10,9 +10,11 @@ from uuid import uuid4
 
 _VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
-_DEFAULT_ONLINE_MATERIAL_ROOT = Path(
+_DEFAULT_CAPCUT_CACHE_ROOT = Path(
     os.environ.get("USERPROFILE", "C:/Users/Admin")
-) / "AppData" / "Local" / "CapCut" / "User Data" / "Cache" / "onlineMaterial"
+) / "AppData" / "Local" / "CapCut" / "User Data" / "Cache"
+_DEFAULT_ONLINE_MATERIAL_ROOT = _DEFAULT_CAPCUT_CACHE_ROOT / "onlineMaterial"
+_DEFAULT_EFFECT_CACHE_ROOT = _DEFAULT_CAPCUT_CACHE_ROOT / "effect"
 
 # Baseline thực tế rút ra từ project mask chuẩn (Test1-mask):
 # 1800px -> width 1.2784090909 => base_w ~= 1408
@@ -123,6 +125,46 @@ def _sum_video_track_duration_us(track: dict[str, Any]) -> int:
     return total
 
 
+def _resolve_rectangle_mask_effect_path(resource_id: str) -> str:
+    rid = str(resource_id or "").strip()
+    if not _DEFAULT_EFFECT_CACHE_ROOT.exists() or not _DEFAULT_EFFECT_CACHE_ROOT.is_dir():
+        return ""
+
+    # 1) Ưu tiên tìm folder effect có metadata chứa đúng resource_id.
+    try:
+        for lv1 in sorted(_DEFAULT_EFFECT_CACHE_ROOT.iterdir(), key=lambda p: p.name):
+            if not lv1.is_dir():
+                continue
+            for lv2 in sorted(lv1.iterdir(), key=lambda p: p.name):
+                if not lv2.is_dir() or lv2.name.endswith("_tmp"):
+                    continue
+                for meta_name in ("config.json", "extra.json"):
+                    meta = lv2 / meta_name
+                    if not meta.exists() or not meta.is_file():
+                        continue
+                    try:
+                        text = meta.read_text(encoding="utf-8", errors="ignore")
+                    except Exception:
+                        continue
+                    if rid and rid in text:
+                        return str(lv2).replace("\\", "/")
+    except Exception:
+        pass
+
+    # 2) Fallback: lấy folder effect đầu tiên hợp lệ để tránh path rỗng.
+    try:
+        for lv1 in sorted(_DEFAULT_EFFECT_CACHE_ROOT.iterdir(), key=lambda p: p.name):
+            if not lv1.is_dir():
+                continue
+            for lv2 in sorted(lv1.iterdir(), key=lambda p: p.name):
+                if lv2.is_dir() and not lv2.name.endswith("_tmp"):
+                    return str(lv2).replace("\\", "/")
+    except Exception:
+        pass
+
+    return ""
+
+
 def _build_mask_material(
     *,
     overlay_width: float,
@@ -165,6 +207,12 @@ def _build_mask_material(
     obj.setdefault("name", "Hình chữ nhật")
     obj.setdefault("resource_type", "rectangle")
     obj.setdefault("resource_id", "7374021450748924432")
+
+    # Giữ path effect cho mask để CapCut chắc chắn bật panel shape/round-corner.
+    if not str(obj.get("path") or "").strip():
+        effect_path = _resolve_rectangle_mask_effect_path(str(obj.get("resource_id") or "7374021450748924432"))
+        if effect_path:
+            obj["path"] = effect_path
 
     obj.setdefault("category", "video")
     obj.setdefault("platform", "all")
@@ -656,8 +704,8 @@ def apply_mask_to_draft(
     }
     top_seg["common_keyframes"] = []
     top_seg["keyframe_refs"] = []
-    # Bắt buộc bật adjust mask để CapCut hiện UI shape + bo góc.
-    top_seg["enable_adjust_mask"] = True
+    # Theo draft mẫu ổn định: để False, CapCut vẫn hiện panel shape/bo góc nếu mask material hợp lệ.
+    top_seg["enable_adjust_mask"] = False
 
     refs = _ensure_segment_support_refs(materials, include_mask_id=mask_mat["id"], include_draft_id=comb_draft["id"])
     top_seg["extra_material_refs"] = refs
