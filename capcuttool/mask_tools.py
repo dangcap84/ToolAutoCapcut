@@ -704,11 +704,16 @@ def apply_mask_to_draft(
     }
     top_seg["common_keyframes"] = []
     top_seg["keyframe_refs"] = []
-    # Theo draft mẫu ổn định: để False, CapCut vẫn hiện panel shape/bo góc nếu mask material hợp lệ.
-    top_seg["enable_adjust_mask"] = False
 
     refs = _ensure_segment_support_refs(materials, include_mask_id=mask_mat["id"], include_draft_id=comb_draft["id"])
     top_seg["extra_material_refs"] = refs
+
+    # Hard guard: ép cờ mask ở trạng thái ON để tránh project mới bị mất mask UI sau khi save/open.
+    top_seg["enable_video_mask"] = True
+    top_seg["enable_adjust_mask"] = True
+    top_seg["visible"] = True
+    top_seg["state"] = 0
+    top_seg["is_placeholder"] = False
 
     top_track["segments"] = [top_seg]
 
