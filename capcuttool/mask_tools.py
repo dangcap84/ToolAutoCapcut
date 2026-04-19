@@ -130,7 +130,27 @@ def _resolve_rectangle_mask_effect_path(resource_id: str) -> str:
     if not _DEFAULT_EFFECT_CACHE_ROOT.exists() or not _DEFAULT_EFFECT_CACHE_ROOT.is_dir():
         return ""
 
-    # 1) Ưu tiên tìm folder effect có metadata chứa đúng resource_id.
+    # 1) Ưu tiên effect có config name=rect (shape chuẩn để hiện panel shape/bo góc).
+    try:
+        for lv1 in sorted(_DEFAULT_EFFECT_CACHE_ROOT.iterdir(), key=lambda p: p.name):
+            if not lv1.is_dir():
+                continue
+            for lv2 in sorted(lv1.iterdir(), key=lambda p: p.name):
+                if not lv2.is_dir() or lv2.name.endswith("_tmp"):
+                    continue
+                cfg = lv2 / "config.json"
+                if not cfg.exists() or not cfg.is_file():
+                    continue
+                try:
+                    text = cfg.read_text(encoding="utf-8", errors="ignore")
+                except Exception:
+                    continue
+                if '"name": "rect"' in text.lower().replace("'", '"'):
+                    return str(lv2).replace("\\", "/")
+    except Exception:
+        pass
+
+    # 2) Sau đó mới xét metadata chứa resource_id.
     try:
         for lv1 in sorted(_DEFAULT_EFFECT_CACHE_ROOT.iterdir(), key=lambda p: p.name):
             if not lv1.is_dir():
@@ -151,7 +171,7 @@ def _resolve_rectangle_mask_effect_path(resource_id: str) -> str:
     except Exception:
         pass
 
-    # 2) Fallback: lấy folder effect đầu tiên hợp lệ để tránh path rỗng.
+    # 3) Fallback cuối: lấy folder effect đầu tiên hợp lệ để tránh path rỗng.
     try:
         for lv1 in sorted(_DEFAULT_EFFECT_CACHE_ROOT.iterdir(), key=lambda p: p.name):
             if not lv1.is_dir():
@@ -163,7 +183,6 @@ def _resolve_rectangle_mask_effect_path(resource_id: str) -> str:
         pass
 
     return ""
-
 
 def _build_mask_material(
     *,
@@ -214,10 +233,11 @@ def _build_mask_material(
         if effect_path:
             obj["path"] = effect_path
 
-    obj.setdefault("category", "video")
-    obj.setdefault("platform", "all")
-    obj.setdefault("source_platform", 0)
-    obj.setdefault("is_old_version", False)
+    # Ép cứng theo project chuẩn (không setdefault) để tránh giữ giá trị rác từ schema khác.
+    obj["category"] = "video"
+    obj["platform"] = "all"
+    obj["source_platform"] = 0
+    obj["is_old_version"] = False
 
     cfg = obj.get("config") if isinstance(obj.get("config"), dict) else {}
     mode_norm = str(mode or "params").strip().lower()
