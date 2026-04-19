@@ -556,28 +556,12 @@ def apply_mask_to_draft(
 
     _prune_existing_mask_overlay(draft)
 
-    base_before_mask = copy.deepcopy(draft)
-
     videos = _ensure_material_list(materials, "videos")
-    drafts = _ensure_material_list(materials, "drafts")
     masks = _ensure_material_list(materials, "common_mask")
 
     template_materials = template_draft.get("materials") if isinstance(template_draft, dict) else {}
     if not isinstance(template_materials, dict):
         template_materials = {}
-
-    template_video_comb = None
-    for v in template_materials.get("videos") or []:
-        if isinstance(v, dict) and int(v.get("extra_type_option") or 0) == 2:
-            template_video_comb = v
-            break
-    if template_video_comb is None and videos:
-        template_video_comb = videos[0]
-
-    template_draft_material = None
-    tdrafts = template_materials.get("drafts") or []
-    if tdrafts and isinstance(tdrafts[0], dict):
-        template_draft_material = tdrafts[0]
 
     template_mask = None
     tmasks = template_materials.get("common_mask") or []
@@ -596,21 +580,6 @@ def apply_mask_to_draft(
         ratio = max(1.0, min(300.0, float(mask_scale_percent))) / 100.0
         overlay_width = float(canvas_w) * ratio
         overlay_height = float(canvas_h) * ratio
-
-    comb_video = _build_combination_material(
-        total_duration_us=total_duration_us,
-        template_video=template_video_comb,
-    )
-    videos.append(comb_video)
-
-    comb_draft = _build_draft_material(
-        base_before_mask=base_before_mask,
-        total_duration_us=total_duration_us,
-        template_draft_material=template_draft_material,
-    )
-    # Liên kết 2 chiều để CapCut nhận combination material ổn định.
-    comb_draft["combination_id"] = str(comb_video.get("id") or "")
-    drafts.append(comb_draft)
 
     mask_mat = _build_mask_material(
         overlay_width=overlay_width,
@@ -709,89 +678,53 @@ def apply_mask_to_draft(
                 keep_transition_refs = [r for r in old_refs if str(r) in transition_ids]
                 seg["extra_material_refs"] = _merge_refs_keep_order(keep_transition_refs, list(seg_support_refs))
 
-    # 2) tạo track trên cùng chứa 1 clip combination + mask.
+    # 2) tạo line trên (flag=2) bằng cách clone trực tiếp từng segment hiện tại (không combination).
+    # Cách này giữ timeline/cut giống line chính, chỉ thêm mask để tránh lỗi từ subdraft-combination.
     top_track = _ensure_video_track(draft, flag=2)
-
-    # Ưu tiên schema segment từ template flag=2 để đảm bảo mask editable (shape/size).
-    # Không có template thì dùng schema cứng gần với project mask chuẩn (không clone main segment).
-    template_top_seg = _find_video_track_segment(template_draft, flag=2)
-    if isinstance(template_top_seg, dict):
-        top_seg = _clone(template_top_seg)
-    else:
-        top_seg = {
-            "id": _new_id(),
-            "material_id": "",
-            "target_timerange": {"start": 0, "duration": int(total_duration_us)},
-            "source_timerange": {"start": 0, "duration": int(total_duration_us)},
-            "render_index": 1,
-            "track_render_index": 1,
-            "state": 0,
-            "visible": True,
-            "is_placeholder": False,
-            "reverse": False,
-            "cartoon": False,
-            "group_id": "",
-            "template_id": "",
-            "template_scene": "default",
-            "track_attribute": 0,
-            "uniform_scale": {"on": True, "value": 1.0},
-            "volume": 1.0,
-            "last_nonzero_volume": 1.0,
-            "intensifies_audio": False,
-            "is_tone_modify": False,
-            "enable_video_mask": True,
-            "enable_adjust_mask": False,
-            "common_keyframes": [],
-            "keyframe_refs": [],
-            "clip": {
-                "alpha": 1.0,
-                "flip": {"horizontal": False, "vertical": False},
-                "rotation": 0.0,
-                "scale": {"x": 1.0, "y": 1.0},
-                "transform": {"x": 0.0, "y": 0.0},
-            },
-            "hdr_settings": {"intensity": 1.0, "mode": 1, "nits": 1000},
-        }
-
-    top_seg["id"] = _new_id()
-    top_seg["material_id"] = comb_video["id"]
-    top_seg["target_timerange"] = {"start": 0, "duration": int(total_duration_us)}
-    top_seg["source_timerange"] = {"start": 0, "duration": int(total_duration_us)}
-    top_seg["render_index"] = 1
-    top_seg["track_render_index"] = 1
-    top_seg["enable_video_mask"] = True
-
-    # reset các cấu phần có thể khiến CapCut coi segment là clip đã bake keyframe.
+    top_segments: list[dict[str, Any]] = []
     mask_scale = max(1.0, min(300.0, float(mask_scale_percent))) / 100.0
-    top_seg["clip"] = {
-        "alpha": 1.0,
-        "flip": {"horizontal": False, "vertical": False},
-        "rotation": 0.0,
-        "scale": {"x": float(mask_scale), "y": float(mask_scale)},
-        "transform": {"x": 0.0, "y": 0.0},
-    }
-    top_seg["common_keyframes"] = []
-    top_seg["keyframe_refs"] = []
 
-    refs = _ensure_segment_support_refs(materials, include_mask_id=mask_id, include_draft_id=comb_draft["id"])
-    if mask_id and mask_id not in refs:
-        # Vị trí refs chuẩn: draft,speed,placeholder,mask,canvas,...
-        refs.insert(min(3, len(refs)), mask_id)
-    top_seg["extra_material_refs"] = refs
+    current_main_segments = main_track.get("segments") if isinstance(main_track.get("segments"), list) else []
+    for idx, src_seg in enumerate(current_main_segments):
+        if not isinstance(src_seg, dict):
+            continue
+
+        top_seg = _clone(src_seg)
+        top_seg["id"] = _new_id()
+        top_seg["render_index"] = int(idx)
+        top_seg["track_render_index"] = 1
+
+        # reset các cấu phần có thể khiến CapCut coi segment là clip đã bake keyframe.
+        top_seg["clip"] = {
+            "alpha": 1.0,
+            "flip": {"horizontal": False, "vertical": False},
+            "rotation": 0.0,
+            "scale": {"x": float(mask_scale), "y": float(mask_scale)},
+            "transform": {"x": 0.0, "y": 0.0},
+        }
+        top_seg["common_keyframes"] = []
+        top_seg["keyframe_refs"] = []
+
+        old_refs = top_seg.get("extra_material_refs") if isinstance(top_seg.get("extra_material_refs"), list) else []
+        keep_transition_refs = [r for r in old_refs if str(r) in transition_ids]
+        refs = _ensure_segment_support_refs(materials, include_mask_id=mask_id)
+        top_seg["extra_material_refs"] = _merge_refs_keep_order(keep_transition_refs, refs)
+
+        # Hard guard: giữ ON cho video mask; adjust_mask theo baseline chuẩn để CapCut hiện panel shape/bo góc.
+        top_seg["enable_video_mask"] = True
+        top_seg["enable_adjust_mask"] = False
+        top_seg["visible"] = True
+        top_seg["state"] = 0
+        top_seg["is_placeholder"] = False
+
+        top_segments.append(top_seg)
 
     # Final self-heal: re-check lại common_mask + ref mask trước khi ghi file.
     masks_final = _ensure_material_list(materials, "common_mask")
     if mask_id and not any(str((m or {}).get("id") or "") == mask_id for m in masks_final if isinstance(m, dict)):
         masks_final.append(mask_mat)
 
-    # Hard guard: giữ ON cho video mask; adjust_mask theo baseline chuẩn để CapCut hiện panel shape/bo góc.
-    top_seg["enable_video_mask"] = True
-    top_seg["enable_adjust_mask"] = False
-    top_seg["visible"] = True
-    top_seg["state"] = 0
-    top_seg["is_placeholder"] = False
-
-    top_track["segments"] = [top_seg]
+    top_track["segments"] = top_segments
 
     for k in ["duration", "tm_duration", "max_duration", "draft_duration"]:
         if isinstance(draft.get(k), (int, float)):
